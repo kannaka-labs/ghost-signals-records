@@ -139,6 +139,12 @@ class Orders {
     return r.changes === 1;
   }
 
+  /** Reset one track so the worker rebuilds it: lyrics, task and file cleared. */
+  async trackReset(orderId, idx) {
+    const r = await this.db.run('UPDATE tracks SET status=?, lyrics=NULL, suno_task_id=NULL, file=NULL, duration_sec=NULL, error=NULL, updated_at=? WHERE order_id=? AND idx=?', ['pending', now(), orderId, idx]);
+    return r.changes === 1;
+  }
+
   async trackUpdate(orderId, idx, fields) {
     const sets = ['updated_at=?']; const vals = [now()];
     for (const [k, v] of Object.entries(fields)) { sets.push(`${k}=?`); vals.push(v); }

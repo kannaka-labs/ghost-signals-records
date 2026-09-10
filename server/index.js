@@ -14,7 +14,7 @@ const { Tower } = require('./tower');
 const { Kax } = require('./kax');
 const { readBody, readJson } = require('./read-body');
 const { TIERS, PALETTE, ART_DIRECTIONS } = require('./catalog');
-const { orderDir, buildCover } = require('./worker');
+const { orderDir, buildCover, safeName } = require('./worker');
 const { Atelier } = require('./art');
 
 const log = (m) => console.log(`[records ${new Date().toISOString()}] ${m}`);
@@ -139,6 +139,19 @@ async function main() {
           if (m[2] === 'comp') return send(res, 200, await orders.comp(o, 'admin'));
           if (m[2] === 'retry') return send(res, 200, { ok: await orders.requeue(o.id) });
           if (m[2] === 'cancel') return send(res, 200, { ok: await orders.move(o.id, o.state, 'cancelled') });
+        }
+        if ((m = /^\/admin\/orders\/([0-9a-f-]{36})\/track\/(\d+)\/rebuild$/.exec(p)) && req.method === 'POST') {
+          // A delivered order goes back to the floor for one track; the worker
+          // resumes and skips every finished track.
+          const o = await orders.get(m[1]);
+          if (!o || o.state !== 'delivered') return send(res, 404, { error: 'no such delivered order' });
+          const idx = parseInt(m[2], 10) - 1;
+          const tr = (await orders.tracks(o.id)).find((t) => t.idx === idx);
+          if (!tr || !(await orders.trackReset(o.id, idx))) return send(res, 404, { error: 'no such track' });
+          const old = path.join(orderDir(o), `${String(idx + 1).padStart(2, '0')} - ${safeName(tr.title)}.mp3`);
+          if (fs.existsSync(old)) fs.renameSync(old, old.replace(/\.mp3$/, `.previous-${Date.now()}.mp3`));
+          await orders.db.run('UPDATE orders SET state=?, updated_at=? WHERE id=? AND state=?', ['paid', new Date().toISOString(), o.id, 'delivered']);
+          return send(res, 200, { ok: true, track: idx + 1 });
         }
         if ((m = /^\/admin\/orders\/([0-9a-f-]{36})\/cover$/.exec(p)) && req.method === 'POST') {
           const o = await orders.get(m[1]);

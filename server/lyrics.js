@@ -8,13 +8,15 @@ const SYSTEM = 'You write song lyrics. Output ONLY the lyrics, using section tag
 
 async function writeLyrics(brainCfg, { albumTitle, theme, style, title, index, count }) {
   const prompt = `Album: "${albumTitle}". Theme: ${theme}\nSound: ${style}\nThis is track ${index + 1} of ${count}, titled "${title}". Write its lyrics.`;
+  // A 7B model on a CPU takes minutes for 500 tokens; the worker can wait.
+  const cfg = { ...brainCfg, timeoutMs: Math.max(brainCfg.timeoutMs || 0, 600000) };
   try {
-    const out = await chat(brainCfg, [{ role: 'system', content: SYSTEM }, { role: 'user', content: prompt }], { maxTokens: 500, temperature: 0.8 });
+    const out = await chat(cfg, [{ role: 'system', content: SYSTEM }, { role: 'user', content: prompt }], { maxTokens: 500, temperature: 0.8 });
     const cleaned = out.replace(/^```[a-z]*\n?|```$/g, '').trim();
     if (cleaned.length >= 120 && /\[(?:verse|chorus)/i.test(cleaned)) return { lyrics: cleaned.slice(0, 3000), source: 'brain' };
-    return { lyrics: templateLyrics({ title, theme }), source: 'template' };
-  } catch {
-    return { lyrics: templateLyrics({ title, theme }), source: 'template' };
+    return { lyrics: templateLyrics({ title, theme }), source: 'template', reason: `brain output unusable (${cleaned.length} chars)` };
+  } catch (e) {
+    return { lyrics: templateLyrics({ title, theme }), source: 'template', reason: e.message };
   }
 }
 

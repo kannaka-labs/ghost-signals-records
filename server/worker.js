@@ -42,6 +42,7 @@ async function buildTrack(orders, suno, order, track, deps) {
   if (!lyrics && !brief.instrumental) {
     const r = await writeLyrics(cfg.brain, { albumTitle: brief.albumTitle, theme: brief.theme, style: brief.style, title: track.title, index: track.idx, count: brief.trackTitles.length });
     lyrics = r.lyrics;
+    if (r.source === 'template') log(`track ${track.idx + 1}: template lyrics (${r.reason || 'no brain'})`);
     await orders.trackUpdate(order.id, track.idx, { lyrics, status: 'lyrics' });
     fs.writeFileSync(path.join(dir, `lyrics_${String(track.idx + 1).padStart(2, '0')}.txt`), lyrics);
   }
