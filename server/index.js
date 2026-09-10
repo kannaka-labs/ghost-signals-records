@@ -14,7 +14,8 @@ const { Tower } = require('./tower');
 const { Kax } = require('./kax');
 const { readBody, readJson } = require('./read-body');
 const { TIERS, PALETTE, ART_DIRECTIONS } = require('./catalog');
-const { orderDir } = require('./worker');
+const { orderDir, buildCover } = require('./worker');
+const { Atelier } = require('./art');
 
 const log = (m) => console.log(`[records ${new Date().toISOString()}] ${m}`);
 const PUBLIC = path.join(__dirname, '..', 'public');
@@ -138,6 +139,16 @@ async function main() {
           if (m[2] === 'comp') return send(res, 200, await orders.comp(o, 'admin'));
           if (m[2] === 'retry') return send(res, 200, { ok: await orders.requeue(o.id) });
           if (m[2] === 'cancel') return send(res, 200, { ok: await orders.move(o.id, o.state, 'cancelled') });
+        }
+        if ((m = /^\/admin\/orders\/([0-9a-f-]{36})\/cover$/.exec(p)) && req.method === 'POST') {
+          const o = await orders.get(m[1]);
+          if (!o || !['building', 'delivered'].includes(o.state)) return send(res, 404, { error: 'no such buildable order' });
+          const dir = orderDir(o);
+          const f = path.join(dir, 'cover.png');
+          if (fs.existsSync(f)) fs.renameSync(f, path.join(dir, `cover.previous-${Date.now()}.png`));
+          const atelier = cfg.obc.jwt ? new Atelier({ ...cfg.obc, userAgent: cfg.userAgent }) : null;
+          const source = await buildCover(o, atelier);
+          return send(res, 200, { ok: source !== 'placeholder', source });
         }
         if (p === '/admin/panel' && req.method === 'POST' && kax) { const body = await readJson(req); return send(res, 200, await kax.panel(body)); }
         return send(res, 404, { error: 'not found' });

@@ -27,9 +27,12 @@ class Atelier {
   async generate({ prompt, description, file, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
     const wait = this.gapMs - (Date.now() - this.lastAt);
     if (wait > 0) await sleep(wait);
-    let entered = false;
+    // The city wants the bot inside the studio AND the studio named in the
+    // body (a 2026-09 change: "building_id required").
+    await this.enter();
+    let entered = true;
     for (let attempt = 0; attempt < 3; attempt++) {
-      const r = await request('POST', `${API}/artifacts/generate-image`, { headers: this.headers(), body: JSON.stringify({ prompt: String(prompt).slice(0, 500), description: String(description || '').slice(0, 480) }), timeoutMs: 180000 });
+      const r = await request('POST', `${API}/artifacts/generate-image`, { headers: this.headers(), body: JSON.stringify({ building_id: this.building, prompt: String(prompt).slice(0, 500), description: String(description || '').slice(0, 480) }), timeoutMs: 180000 });
       this.lastAt = Date.now();
       const text = r.body.toString('utf8');
       if (r.status === 200) {
@@ -42,7 +45,8 @@ class Atelier {
         fs.writeFileSync(file, img.body);
         return { artifactId, url, bytes: img.body.length };
       }
-      if (/not inside any building/i.test(text) && !entered) { entered = true; await this.enter(); await sleep(5000); continue; }
+      if (/not inside any building|building_id required/i.test(text) && entered) { entered = false; await this.enter(); await sleep(5000); continue; }
+      if (r.status >= 400 && r.status < 500 && !/retry_after|rate/i.test(text)) throw new Error(`atelier ${r.status}: ${text.slice(0, 160)}`);
       let retry = 95;
       try { retry = (JSON.parse(text).retry_after || 95) + 10; } catch { /* keep */ }
       await sleep(retry * 1000);
