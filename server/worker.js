@@ -129,7 +129,9 @@ async function main() {
   const db = await new Db(path.join(cfg.dataDir, 'records.sqlite')).open();
   const orders = new Orders(db, cfg);
   const deps = {
-    suno: new Suno({ ...cfg.suno, userAgent: cfg.userAgent }),
+    // The generator refuses a request without a callback URL even though
+    // we poll; the studio answers 200 to whatever it posts there.
+    suno: new Suno({ ...cfg.suno, callbackUrl: cfg.suno.callbackUrl || `${cfg.publicUrl}/api/suno/callback`, userAgent: cfg.userAgent }),
     atelier: cfg.obc.jwt ? new Atelier({ ...cfg.obc, userAgent: cfg.userAgent }) : null,
   };
   log(`worker up; data ${cfg.dataDir}; atelier ${deps.atelier ? 'on' : 'off (placeholder covers)'}; brain ${cfg.brain.key ? 'on' : 'off (template lyrics)'}`);

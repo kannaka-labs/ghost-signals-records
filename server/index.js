@@ -117,6 +117,10 @@ async function main() {
         const r = await stripe.webhook(raw, req.headers['stripe-signature']);
         return send(res, r.status, r.body, 'text/plain');
       }
+      if (p === '/api/suno/callback' && req.method === 'POST') {
+        await readBody(req, 1 << 20); // the worker polls; the callback is acknowledged and dropped
+        return send(res, 200, { ok: true });
+      }
       if (p === '/api/tower/events' && req.method === 'POST') {
         const raw = await readBody(req, 256 * 1024);
         const r = await tower.receive(raw, req.headers['x-tower-signature']);

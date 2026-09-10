@@ -55,6 +55,7 @@ test('the server answers health, catalog, a desk conversation, the album page, t
   assert.equal((await api(base, `/album/${pid}/file/cover.png`)).status, 404, 'no files before the build');
   assert.equal((await api(base, '/album/nope-nope-nope-nope-nope')).status, 404);
 
+  assert.equal((await api(base, '/api/suno/callback', { anything: 1 })).status, 200);
   assert.equal((await api(base, '/api/stripe/webhook', {})).status, 503);
   assert.equal((await api(base, '/api/tower/events', {})).status, 503);
 
