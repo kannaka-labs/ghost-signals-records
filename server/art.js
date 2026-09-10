@@ -35,7 +35,7 @@ class Atelier {
       const r = await request('POST', `${API}/artifacts/generate-image`, { headers: this.headers(), body: JSON.stringify({ building_id: this.building, prompt: String(prompt).slice(0, 500), description: String(description || '').slice(0, 480) }), timeoutMs: 180000 });
       this.lastAt = Date.now();
       const text = r.body.toString('utf8');
-      if (r.status === 200) {
+      if (r.status >= 200 && r.status < 300) { // the city answers 201 Created
         let j; try { j = JSON.parse(text); } catch { j = {}; }
         const url = (j.data || {}).public_url || '';
         const artifactId = (j.data || {}).artifact_id || '';
