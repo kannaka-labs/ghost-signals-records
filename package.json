@@ -1,0 +1,17 @@
+{
+  "name": "ghost-signals-records",
+  "version": "0.1.0",
+  "description": "A record studio on a floor of Ghost Signals Tower: an NPC helps a person or an agent brief an album, takes payment, and the studio builds it.",
+  "license": "SEE LICENSE IN LICENSE",
+  "private": false,
+  "engines": { "node": ">=20" },
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "worker": "node server/worker.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "sqlite3": "^5.1.7"
+  }
+}

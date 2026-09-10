@@ -1,0 +1,20 @@
+# /etc/systemd/system/gs-records.service — the studio's front door.
+# Absolute paths; the env file holds every credential (0600, owner opc).
+[Unit]
+Description=Ghost Signals Records — desk, album pages, webhooks
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=opc
+WorkingDirectory=/home/opc/ghost-signals-records
+EnvironmentFile=/home/opc/.gs-records.env
+ExecStart=/usr/bin/node /home/opc/ghost-signals-records/server/index.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

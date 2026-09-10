@@ -1,0 +1,21 @@
+# /etc/systemd/system/gs-records-worker.service — the studio floor.
+# One worker; it claims one paid order at a time under compare-and-set, so a
+# second instance would be safe but pointless against one generator quota.
+[Unit]
+Description=Ghost Signals Records — build worker
+After=network-online.target gs-records.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=opc
+WorkingDirectory=/home/opc/ghost-signals-records
+EnvironmentFile=/home/opc/.gs-records.env
+ExecStart=/usr/bin/node /home/opc/ghost-signals-records/server/worker.js
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

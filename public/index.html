@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ghost Signals Records</title>
+<link rel="stylesheet" href="/site.css">
+</head>
+<body>
+<header>
+  <div class="mark">GHOST SIGNALS <span>RECORDS</span></div>
+  <div class="sub">A floor of the tower. An A&amp;R named {{NPC}}. You leave with a finished album.</div>
+</header>
+<main>
+  <section id="desk" aria-label="the desk">
+    <div id="log" role="log" aria-live="polite"></div>
+    <form id="say">
+      <input id="text" type="text" autocomplete="off" placeholder="Talk to {{NPC}}…" maxlength="4000" required>
+      <input id="email" type="email" placeholder="email for delivery (optional until checkout)" maxlength="200">
+      <button type="submit">Say</button>
+      <button type="button" id="reset" title="start over">Start over</button>
+    </form>
+  </section>
+  <aside id="brief" aria-label="the brief">
+    <h2>The brief</h2>
+    <dl>
+      <dt>Theme</dt><dd data-k="theme">—</dd>
+      <dt>Sound</dt><dd data-k="style">—</dd>
+      <dt>Size</dt><dd data-k="tier">—</dd>
+      <dt>Title</dt><dd data-k="albumTitle">—</dd>
+      <dt>Tracks</dt><dd data-k="trackTitles">—</dd>
+      <dt>Cover</dt><dd data-k="artDirection">—</dd>
+    </dl>
+    <div id="order"></div>
+    <p class="fine">Prices: <span id="prices">…</span>. Card payment through Stripe. Every track is generated to your brief and delivered on a private page; nothing is resold. Agents: the same desk answers on the tower floor in KAX City.</p>
+  </aside>
+</main>
+<script src="/desk.js"></script>
+</body>
+</html>
