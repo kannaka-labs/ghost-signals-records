@@ -4,37 +4,130 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ghost Signals Records</title>
+<meta name="description" content="A record studio on floor three of Ghost Signals Tower. Tell the desk what your record is about and leave with a finished album: lyrics, every track, a cover, and a page you can play and download.">
 <link rel="stylesheet" href="/site.css">
 </head>
 <body>
-<header>
-  <div class="mark">GHOST SIGNALS <span>RECORDS</span></div>
-  <div class="sub">A floor of the tower. An A&amp;R named {{NPC}}. You leave with a finished album.</div>
+
+<header class="topbar">
+  <a class="wordmark" href="#top">Ghost&nbsp;Signals <em>Records</em></a>
+  <p class="whereabouts">Floor three, Ghost Signals Tower</p>
 </header>
-<main>
-  <section id="desk" aria-label="the desk">
-    <div id="log" role="log" aria-live="polite"></div>
-    <form id="say">
-      <input id="text" type="text" autocomplete="off" placeholder="Talk to {{NPC}}…" maxlength="4000" required>
-      <input id="email" type="email" placeholder="email for delivery (optional until checkout)" maxlength="200">
-      <button type="submit">Say</button>
-      <button type="button" id="reset" title="start over">Start over</button>
-    </form>
+
+<main id="top">
+
+  <!-- The front sleeve -->
+  <section class="hero">
+    <div class="sleeve" id="hero-sleeve">
+      <img id="hero-cover" alt="" width="640" height="640">
+      <p class="sleeve-empty" id="hero-empty">Your record goes here</p>
+    </div>
+    <div class="hero-words">
+      <h1>Every record here starts as a&nbsp;conversation.</h1>
+      <p class="lede">Tell the desk what the record is about, what it should sound like, and how long it runs. The studio writes the lyrics, records every track, paints the cover, and hands you a page you can play, download and keep.</p>
+      <p class="hero-actions">
+        <button class="btn play-album" id="hero-play" type="button" data-role="play-selected">Hear <span id="hero-play-title">the latest record</span></button>
+        <a class="btn ghost" href="#desk">Start a record</a>
+      </p>
+      <p class="hero-fine" id="hero-fine"></p>
+    </div>
   </section>
-  <aside id="brief" aria-label="the brief">
-    <h2>The brief</h2>
-    <dl>
-      <dt>Theme</dt><dd data-k="theme">—</dd>
-      <dt>Sound</dt><dd data-k="style">—</dd>
-      <dt>Size</dt><dd data-k="tier">—</dd>
-      <dt>Title</dt><dd data-k="albumTitle">—</dd>
-      <dt>Tracks</dt><dd data-k="trackTitles">—</dd>
-      <dt>Cover</dt><dd data-k="artDirection">—</dd>
-    </dl>
-    <div id="order"></div>
-    <p class="fine">Prices: <span id="prices">…</span>. Card payment through Stripe. Every track is generated to your brief and delivered on a private page; nothing is resold. Agents: the same desk answers on the tower floor in KAX City.</p>
-  </aside>
+
+  <!-- The back sleeve: what was asked for, and what came back -->
+  <section class="back-sleeve" id="record" aria-labelledby="record-h">
+    <h2 id="record-h" class="section-h">The brief, and what came back</h2>
+    <div class="back-grid">
+      <div class="brief">
+        <p class="brief-line"><span class="key">Theme</span><span class="val" id="b-theme"></span></p>
+        <p class="brief-line"><span class="key">Sound</span><span class="val" id="b-style"></span></p>
+        <p class="brief-line"><span class="key">Length</span><span class="val" id="b-tier"></span></p>
+        <p class="brief-note" id="b-note"></p>
+      </div>
+      <ol class="tracklist" id="tracklist"></ol>
+    </div>
+  </section>
+
+  <!-- The shelf -->
+  <section class="shelf-wrap" id="shelf" aria-labelledby="shelf-h">
+    <div class="shelf-head">
+      <h2 id="shelf-h" class="section-h">On the shelf</h2>
+      <p class="shelf-sub">Records made here whose owners chose to show them. Pull one out.</p>
+    </div>
+    <div class="shelf" id="shelf-rack" role="list"></div>
+    <p class="shelf-empty" id="shelf-empty" hidden>No one has put a record out yet. The first one on this shelf will be someone's first record.</p>
+  </section>
+
+  <!-- The spin -->
+  <section class="spin" aria-labelledby="spin-h">
+    <div class="spin-card">
+      <p class="lamp"><span class="dot" aria-hidden="true"></span>Ghost Signals Radio</p>
+      <h2 id="spin-h">One spin, on the air</h2>
+      <p>Every record made here comes with a single airing. Pick one track and it goes out over Ghost Signals Radio, announced by name, at a time we write to tell you. It plays once. After that it belongs to you alone again.</p>
+      <p class="spin-how">Choose the track on your album page once the record is finished.</p>
+    </div>
+  </section>
+
+  <!-- Cost -->
+  <section class="cost" aria-labelledby="cost-h">
+    <h2 id="cost-h" class="section-h">What it costs</h2>
+    <ul class="prices" id="prices"></ul>
+    <p class="cost-note" id="cost-note"></p>
+  </section>
+
+  <!-- The desk -->
+  <section class="desk-wrap" id="desk" aria-labelledby="desk-h">
+    <div class="desk-head">
+      <h2 id="desk-h" class="section-h">Talk to the desk</h2>
+      <p class="desk-sub">{{NPC}} is the A&amp;R here. Say what the record is about and she will take it from there: sound, length, a title, a running order, a cover. Nothing is charged or built until you confirm the brief.</p>
+    </div>
+    <div class="desk">
+      <div id="log" class="log" role="log" aria-live="polite" aria-label="conversation with the desk"></div>
+      <form id="say" class="say">
+        <label class="sr" for="text">Your message</label>
+        <input id="text" type="text" autocomplete="off" placeholder="A record about…" maxlength="4000" required>
+        <label class="sr" for="email">Email for delivery</label>
+        <input id="email" type="email" placeholder="Email, so we can send the record when it is done" maxlength="200">
+        <button type="submit" class="btn">Send</button>
+        <button type="button" id="reset" class="btn ghost small">Start over</button>
+      </form>
+    </div>
+    <aside class="brief-panel" id="brief-panel" hidden>
+      <h3>Your brief so far</h3>
+      <dl>
+        <dt>Theme</dt><dd data-k="theme">—</dd>
+        <dt>Sound</dt><dd data-k="style">—</dd>
+        <dt>Length</dt><dd data-k="tier">—</dd>
+        <dt>Title</dt><dd data-k="albumTitle">—</dd>
+        <dt>Tracks</dt><dd data-k="trackTitles">—</dd>
+        <dt>Cover</dt><dd data-k="artDirection">—</dd>
+      </dl>
+      <div id="order-state"></div>
+    </aside>
+  </section>
+
 </main>
-<script src="/desk.js"></script>
+
+<footer class="foot">
+  <p>Ghost Signals Records, floor three of Ghost Signals Tower, KAX City. Records are built to your brief and delivered on a private page. Nothing is shown here unless its owner asks for it.</p>
+</footer>
+
+<!-- The player rides along -->
+<div class="player" id="player" hidden>
+  <button class="transport" id="transport" type="button" aria-label="Play">
+    <span class="glyph" id="transport-glyph">&#9654;</span>
+  </button>
+  <div class="now">
+    <p class="now-track" id="now-track"></p>
+    <p class="now-album" id="now-album"></p>
+  </div>
+  <div class="meter" id="meter" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+    <div class="meter-fill" id="meter-fill"></div>
+  </div>
+  <p class="clock" id="clock">0:00</p>
+  <button class="transport small" id="player-close" type="button" aria-label="Close the player">&times;</button>
+</div>
+<audio id="audio" preload="none"></audio>
+
+<script src="/app.js"></script>
 </body>
 </html>

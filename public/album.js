@@ -1,43 +1,156 @@
+/* An album's own page: play it, and decide what the world sees of it. */
 (function () {
   'use strict';
-  var main = document.querySelector('main.album');
-  var id = main.getAttribute('data-id');
-  var tracks = document.getElementById('tracks');
-  var state = document.getElementById('state');
-  var pay = document.getElementById('pay');
-  var cover = document.getElementById('cover');
-  var paidHint = /[?&]paid=1/.test(location.search);
+  var $ = function (id) { return document.getElementById(id); };
+  var id = document.querySelector('main.album-page').dataset.id;
+  var album = null;
+  var polling = false;
 
   function fmt(s) { s = Math.round(s || 0); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
 
+  // ---- player (the same transport the front page uses) ----
+  var audio = $('audio'), player = $('player'), current = null;
+  function playTrack(t) {
+    current = t;
+    audio.src = t.file;
+    audio.play().catch(function () {});
+    player.hidden = false;
+    $('now-track').textContent = t.title;
+    $('now-album').textContent = album ? album.album : '';
+    mark();
+  }
+  function mark() {
+    var rows = document.querySelectorAll('#tracks li');
+    for (var i = 0; i < rows.length; i++) {
+      rows[i].dataset.playing = (current && String(rows[i].dataset.n) === String(current.n) && !audio.paused) ? 'true' : 'false';
+    }
+  }
+  $('transport').addEventListener('click', function () {
+    if (!current) { var first = (album.tracks || []).filter(function (t) { return t.file; })[0]; if (first) playTrack(first); return; }
+    if (audio.paused) audio.play(); else audio.pause();
+  });
+  $('player-close').addEventListener('click', function () { audio.pause(); player.hidden = true; });
+  audio.addEventListener('play', function () { $('transport-glyph').innerHTML = '&#10073;&#10073;'; mark(); });
+  audio.addEventListener('pause', function () { $('transport-glyph').innerHTML = '&#9654;'; mark(); });
+  audio.addEventListener('timeupdate', function () {
+    var pct = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+    $('meter-fill').style.width = pct + '%';
+    $('clock').textContent = fmt(audio.currentTime);
+  });
+  $('meter').addEventListener('click', function (ev) {
+    var r = this.getBoundingClientRect();
+    if (audio.duration) audio.currentTime = ((ev.clientX - r.left) / r.width) * audio.duration;
+  });
+
+  // ---- the page ----
+  var WORDS = {
+    quoted: 'Waiting for payment. The studio starts the moment it clears.',
+    paid: 'Paid. The studio starts shortly.',
+    building: 'Building now. Tracks appear here as they finish.',
+    delivered: 'Finished.',
+    failed: 'The build hit a problem and the operator has been told.',
+    cancelled: 'Cancelled.',
+    briefing: 'Still at the desk.',
+  };
+
   function render(a) {
-    var msg = { quoted: 'Waiting for payment.', paid: 'Paid. The studio starts shortly.', building: 'Building. Tracks appear here as they finish.', delivered: 'Delivered.', failed: 'The build hit a problem; the operator has been told.', cancelled: 'Cancelled.', briefing: 'Still at the desk.' };
-    state.textContent = (a.tier ? a.tier + ' · ' : '') + (msg[a.state] || a.state) + (paidHint && a.state === 'quoted' ? ' (payment received; confirming…)' : '');
-    tracks.innerHTML = '';
+    album = a;
+    $('title').textContent = a.album;
+    $('state').textContent = (a.tier ? a.tier + '. ' : '') + (WORDS[a.state] || a.state);
+    if (a.cover) { $('cover').src = a.cover; $('cover').alt = 'Cover of ' + a.album; $('cover-empty').hidden = true; }
+
+    var ol = $('tracks');
+    ol.textContent = '';
     a.tracks.forEach(function (t) {
       var li = document.createElement('li');
-      var title = document.createElement('span'); title.className = 'ttl'; title.textContent = t.title;
-      li.appendChild(title);
+      li.dataset.n = t.n;
+      var num = document.createElement('span'); num.className = 'num'; num.textContent = String(t.n).padStart(2, '0');
+      var mid;
       if (t.file) {
-        var au = document.createElement('audio'); au.controls = true; au.preload = 'none'; au.src = t.file; li.appendChild(au);
-        var dl = document.createElement('a'); dl.href = t.file + '?dl=1'; dl.textContent = 'download' + (t.duration ? ' · ' + fmt(t.duration) : ''); dl.className = 'small'; li.appendChild(dl);
+        mid = document.createElement('button'); mid.className = 'name'; mid.type = 'button'; mid.textContent = t.title;
+        var bars = document.createElement('span'); bars.className = 'bars'; bars.setAttribute('aria-hidden', 'true');
+        bars.innerHTML = '<i></i><i></i><i></i>'; mid.appendChild(bars);
+        mid.addEventListener('click', function () { playTrack(t); });
       } else {
-        var st = document.createElement('span'); st.className = 'small'; st.textContent = t.status; li.appendChild(st);
+        mid = document.createElement('span'); mid.className = 'name'; mid.textContent = t.title;
       }
-      tracks.appendChild(li);
+      var right = document.createElement('span'); right.className = 'dur';
+      right.textContent = t.file ? fmt(t.duration) : t.status;
+      li.appendChild(num); li.appendChild(mid); li.appendChild(right);
+      if (t.file) {
+        var dl = document.createElement('a'); dl.className = 'dl'; dl.href = t.file + '?dl=1'; dl.textContent = 'download';
+        li.appendChild(dl);
+      }
+      ol.appendChild(li);
     });
-    cover.innerHTML = '';
-    if (a.cover) { var img = document.createElement('img'); img.src = a.cover; img.alt = 'cover'; cover.appendChild(img); }
-    pay.innerHTML = '';
-    if (a.checkoutUrl) { var b = document.createElement('a'); b.className = 'pay'; b.href = a.checkoutUrl; b.textContent = 'Pay and start the build'; pay.appendChild(b); }
+
+    $('pay').textContent = '';
+    if (a.checkoutUrl) {
+      var b = document.createElement('a'); b.className = 'btn'; b.href = a.checkoutUrl; b.textContent = 'Pay and start the build';
+      $('pay').appendChild(b);
+    }
+
+    if (a.state === 'delivered') {
+      $('owner').hidden = false;
+      $('feature-on').checked = Boolean(a.featured);
+      if (a.note) $('feature-note').value = a.note;
+      var sel = $('radio-track');
+      if (!sel.options.length) {
+        a.tracks.filter(function (t) { return t.file; }).forEach(function (t) {
+          var o = document.createElement('option'); o.value = t.n; o.textContent = t.n + '. ' + t.title; sel.appendChild(o);
+        });
+      }
+      if (a.radioTrack) sel.value = a.radioTrack;
+      if (a.radioAired) {
+        $('radio-said').textContent = 'Track ' + a.radioTrack + ' has had its spin.';
+        $('radio-send').disabled = true; sel.disabled = true;
+      } else if (a.radioTrack) {
+        $('radio-said').textContent = 'Track ' + a.radioTrack + ' is queued. You can change it until it airs.';
+      }
+    }
+
+    mark();
+    if ((a.state === 'building' || a.state === 'paid') && !polling) { polling = true; setTimeout(load, 20000); }
+    else if (a.state === 'building' || a.state === 'paid') setTimeout(load, 20000);
   }
 
   function load() {
     fetch('/api/album/' + id).then(function (r) { return r.json(); }).then(function (a) {
-      if (a.error) { state.textContent = a.error; return; }
+      if (a.error) { $('state').textContent = a.error; return; }
       render(a);
-      if (a.state === 'building' || a.state === 'paid' || (paidHint && a.state === 'quoted')) setTimeout(load, 20000);
-    }).catch(function () { state.textContent = 'Could not load; refresh.'; });
+    }).catch(function () { $('state').textContent = 'Could not load this page. Refresh to try again.'; });
   }
   load();
+
+  // ---- the owner's two decisions ----
+  function say(el, text) { el.textContent = text; }
+
+  $('feature-on').addEventListener('change', function () {
+    var on = this.checked;
+    fetch('/api/album/' + id + '/feature', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ on: on, note: $('feature-note').value.trim() || undefined }),
+    }).then(function (r) { return r.json(); }).then(function () { load(); });
+  });
+  $('feature-note').addEventListener('change', function () {
+    if (!$('feature-on').checked) return;
+    fetch('/api/album/' + id + '/feature', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ on: true, note: this.value.trim() || undefined }),
+    });
+  });
+
+  $('radio-send').addEventListener('click', function () {
+    var n = Number($('radio-track').value);
+    if (!n) return;
+    say($('radio-said'), 'Sending…');
+    fetch('/api/album/' + id + '/radio', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ track: n }),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      say($('radio-said'), d.ok
+        ? 'Queued: “' + d.title + '”. We will write when it airs.'
+        : (d.error || 'That could not be queued.'));
+    }).catch(function () { say($('radio-said'), 'That could not be queued.'); });
+  });
 })();

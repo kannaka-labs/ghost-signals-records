@@ -31,7 +31,15 @@ const SCHEMA = [
      created_at TEXT NOT NULL,
      updated_at TEXT NOT NULL
    )`,
+  // Consent to be shown in public, and the one radio spin. Both are the
+  // buyer's to give and to take back; nothing is public by default.
+  `ALTER TABLE orders ADD COLUMN featured_at TEXT`,
+  `ALTER TABLE orders ADD COLUMN share_note TEXT`,
+  `ALTER TABLE orders ADD COLUMN radio_track_idx INTEGER`,
+  `ALTER TABLE orders ADD COLUMN radio_requested_at TEXT`,
+  `ALTER TABLE orders ADD COLUMN radio_aired_at TEXT`,
   `CREATE INDEX IF NOT EXISTS orders_state ON orders(state)`,
+  `CREATE INDEX IF NOT EXISTS orders_featured ON orders(featured_at)`,
   `CREATE INDEX IF NOT EXISTS orders_pi ON orders(stripe_payment_intent)`,
   `CREATE TABLE IF NOT EXISTS sessions (
      id TEXT PRIMARY KEY,
@@ -83,7 +91,15 @@ class Db {
     }).then(async () => {
       await this.run('PRAGMA journal_mode=WAL');
       await this.run('PRAGMA busy_timeout=5000');
-      for (const s of SCHEMA) await this.run(s);
+      for (const s of SCHEMA) {
+        // An ALTER that has already been applied is not an error; every other
+        // failure still is.
+        try {
+          await this.run(s);
+        } catch (e) {
+          if (!/duplicate column name/i.test(String(e.message))) throw e;
+        }
+      }
       return this;
     });
   }

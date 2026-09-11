@@ -3,24 +3,69 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
 <title>{{TITLE}} · Ghost Signals Records</title>
 <link rel="stylesheet" href="/site.css">
 </head>
 <body>
-<header>
-  <div class="mark">GHOST SIGNALS <span>RECORDS</span></div>
-  <div class="sub">A private page. Only people with this link can see it.</div>
+
+<header class="topbar">
+  <a class="wordmark" href="/">Ghost&nbsp;Signals <em>Records</em></a>
+  <p class="whereabouts">A private page. Only people with this link can open it.</p>
 </header>
-<main class="album" data-id="{{PUBLIC_ID}}">
-  <div id="cover"></div>
-  <section>
+
+<main class="hero album-page" data-id="{{PUBLIC_ID}}">
+  <div class="sleeve">
+    <img id="cover" alt="" width="640" height="640">
+    <p class="sleeve-empty" id="cover-empty">The cover is being painted</p>
+  </div>
+  <div class="hero-words">
     <h1 id="title">{{TITLE}}</h1>
-    <p id="state"></p>
-    <ol id="tracks"></ol>
+    <p class="lede" id="state"></p>
+    <ol class="tracklist" id="tracks"></ol>
     <p id="pay"></p>
-    <p class="fine"><a href="/desk">Back to the desk</a></p>
-  </section>
+
+    <div class="owner" id="owner" hidden>
+      <h2 class="section-h">Yours to do as you like</h2>
+
+      <div class="owner-row">
+        <label class="switch">
+          <input type="checkbox" id="feature-on">
+          <span>Show this record on the front page</span>
+        </label>
+        <p class="owner-note">Anyone visiting the label will see the cover, the brief and the tracklist, and will be able to play it. This link becomes public. Turn it off and it comes straight back down.</p>
+        <label class="sr" for="feature-note">A line about the record</label>
+        <input id="feature-note" type="text" maxlength="200" placeholder="A line to show with it, if you like">
+      </div>
+
+      <div class="owner-row" id="radio-row">
+        <p class="owner-head">One spin on Ghost Signals Radio</p>
+        <p class="owner-note">Pick a track and it airs once, announced by name. We write to tell you when. It plays that one time.</p>
+        <div class="owner-controls">
+          <label class="sr" for="radio-track">Track for the radio</label>
+          <select id="radio-track"></select>
+          <button class="btn" id="radio-send" type="button">Send it to the radio</button>
+        </div>
+        <p class="owner-said" id="radio-said"></p>
+      </div>
+    </div>
+
+    <p class="hero-fine"><a href="/#desk">Make another record</a></p>
+  </div>
 </main>
+
+<div class="player" id="player" hidden>
+  <button class="transport" id="transport" type="button" aria-label="Play"><span class="glyph" id="transport-glyph">&#9654;</span></button>
+  <div class="now">
+    <p class="now-track" id="now-track"></p>
+    <p class="now-album" id="now-album"></p>
+  </div>
+  <div class="meter" id="meter" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="meter-fill" id="meter-fill"></div></div>
+  <p class="clock" id="clock">0:00</p>
+  <button class="transport small" id="player-close" type="button" aria-label="Close the player">&times;</button>
+</div>
+<audio id="audio" preload="none"></audio>
+
 <script src="/album.js"></script>
 </body>
 </html>

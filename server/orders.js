@@ -169,6 +169,50 @@ class Orders {
     return r.changes === 1;
   }
 
+  /** The buyer puts their record on the label's front page, or takes it
+   *  back. Featuring makes the album's link public; nothing else changes. */
+  async setFeatured(orderId, on, note) {
+    const r = await this.db.run(
+      'UPDATE orders SET featured_at=?, share_note=?, updated_at=? WHERE id=? AND state=?',
+      [on ? now() : null, on ? String(note || '').slice(0, 200) : null, now(), orderId, 'delivered'],
+    );
+    return r.changes === 1;
+  }
+
+  /** The buyer picks one track for its single airing. Recorded here; the
+   *  radio does the airing and stamps radio_aired_at when it has. */
+  async requestRadio(orderId, idx) {
+    const r = await this.db.run(
+      'UPDATE orders SET radio_track_idx=?, radio_requested_at=COALESCE(radio_requested_at, ?), updated_at=? WHERE id=? AND state=? AND radio_aired_at IS NULL',
+      [idx, now(), now(), orderId, 'delivered'],
+    );
+    return r.changes === 1;
+  }
+
+  /** Everything on the shelf, newest first, with its tracks. */
+  async featured(limit = 24) {
+    const rows = await this.db.all('SELECT * FROM orders WHERE featured_at IS NOT NULL AND state=? ORDER BY featured_at DESC LIMIT ?', ['delivered', limit]);
+    const out = [];
+    for (const row of rows) {
+      const o = hydrate(row);
+      out.push({ order: o, tracks: await this.tracks(o.id) });
+    }
+    return out;
+  }
+
+  /** Radio spins asked for and not yet aired, oldest first. */
+  async radioQueue(limit = 20) {
+    return (await this.db.all(
+      'SELECT * FROM orders WHERE radio_requested_at IS NOT NULL AND radio_aired_at IS NULL AND state=? ORDER BY radio_requested_at ASC LIMIT ?',
+      ['delivered', limit],
+    )).map(hydrate);
+  }
+
+  async markRadioAired(orderId) {
+    const r = await this.db.run('UPDATE orders SET radio_aired_at=?, updated_at=? WHERE id=? AND radio_aired_at IS NULL', [now(), now(), orderId]);
+    return r.changes === 1;
+  }
+
   /** Reset one track so the worker rebuilds it: lyrics, task and file cleared. */
   async trackReset(orderId, idx) {
     const r = await this.db.run('UPDATE tracks SET status=?, lyrics=NULL, suno_task_id=NULL, file=NULL, duration_sec=NULL, error=NULL, updated_at=? WHERE order_id=? AND idx=?', ['pending', now(), orderId, idx]);
@@ -189,6 +233,8 @@ function hydrate(row) {
     priceCents: row.price_cents, currency: row.currency, email: row.email, principal: row.principal, origin: row.origin,
     stripeSessionId: row.stripe_session_id, stripePaymentIntent: row.stripe_payment_intent, checkoutUrl: row.checkout_url, checkoutAttempt: row.checkout_attempt,
     paidAt: row.paid_at, compedAt: row.comped_at, refundedAt: row.refunded_at, disputedAt: row.disputed_at, buildStartedAt: row.build_started_at, deliveredAt: row.delivered_at, failedReason: row.failed_reason,
+    featuredAt: row.featured_at, shareNote: row.share_note,
+    radioTrackIdx: row.radio_track_idx, radioRequestedAt: row.radio_requested_at, radioAiredAt: row.radio_aired_at,
     createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }

@@ -106,14 +106,60 @@ async function main() {
         return send(res, 200, { session: sid, reply: r.reply, step: r.session.state.step, brief: r.session.state.brief, order: r.order ? { publicId: r.order.publicId, state: r.order.state, checkoutUrl: r.order.checkoutUrl, priceCents: r.order.priceCents } : null }, undefined, setCookie);
       }
 
+      // ---- the shelf: albums whose buyers chose to show them ---------------
+      if (p === '/api/showcase') {
+        const rows = await orders.featured(24);
+        return send(res, 200, {
+          albums: rows.map(({ order: o, tracks }) => ({
+            publicId: o.publicId,
+            album: o.brief.albumTitle,
+            tier: o.tierLabel,
+            theme: o.brief.theme,
+            style: o.brief.style,
+            note: o.shareNote || null,
+            deliveredAt: o.deliveredAt,
+            cover: fs.existsSync(path.join(orderDir(o), 'cover.png')) ? `/album/${o.publicId}/file/cover.png` : null,
+            radioTrack: o.radioTrackIdx === null || o.radioTrackIdx === undefined ? null : o.radioTrackIdx + 1,
+            radioAired: Boolean(o.radioAiredAt),
+            tracks: tracks.filter((t) => t.file).map((t) => ({
+              n: t.idx + 1, title: t.title, duration: t.duration_sec,
+              file: `/album/${o.publicId}/file/${encodeURIComponent(t.file)}`,
+            })),
+          })),
+        });
+      }
+
       // ---- an order's public state + files ----------------------------------
       let m;
       if ((m = /^\/api\/album\/([A-Za-z0-9_-]{16,32})$/.exec(p))) {
         const o = await orders.getByPublicId(m[1]);
         if (!o) return send(res, 404, { error: 'not found' });
         const tracks = await orders.tracks(o.id);
-        return send(res, 200, { publicId: o.publicId, state: o.state, album: o.brief.albumTitle, tier: o.tierLabel, tracks: tracks.map((t) => ({ n: t.idx + 1, title: t.title, status: t.status, file: t.file ? `/album/${o.publicId}/file/${encodeURIComponent(t.file)}` : null, duration: t.duration_sec })), cover: fs.existsSync(path.join(orderDir(o), 'cover.png')) ? `/album/${o.publicId}/file/cover.png` : null, checkoutUrl: o.state === 'quoted' ? o.checkoutUrl : null, deliveredAt: o.deliveredAt });
+        return send(res, 200, { publicId: o.publicId, state: o.state, album: o.brief.albumTitle, tier: o.tierLabel, tracks: tracks.map((t) => ({ n: t.idx + 1, title: t.title, status: t.status, file: t.file ? `/album/${o.publicId}/file/${encodeURIComponent(t.file)}` : null, duration: t.duration_sec })), cover: fs.existsSync(path.join(orderDir(o), 'cover.png')) ? `/album/${o.publicId}/file/cover.png` : null, checkoutUrl: o.state === 'quoted' ? o.checkoutUrl : null, deliveredAt: o.deliveredAt, featured: Boolean(o.featuredAt), note: o.shareNote || null, radioTrack: o.radioTrackIdx === null || o.radioTrackIdx === undefined ? null : o.radioTrackIdx + 1, radioAired: Boolean(o.radioAiredAt) });
       }
+      // The buyer's two decisions. Knowing the album's link is the capability:
+      // the same thing that lets you play it lets you share it or spend its
+      // spin. Both are reversible except an airing that already happened.
+      if ((m = /^\/api\/album\/([A-Za-z0-9_-]{16,32})\/(feature|radio)$/.exec(p)) && req.method === 'POST') {
+        if (!allow(ip, 20)) return send(res, 429, { error: 'slow down' });
+        const o = await orders.getByPublicId(m[1]);
+        if (!o) return send(res, 404, { error: 'not found' });
+        if (o.state !== 'delivered') return send(res, 409, { error: 'the record is not finished yet' });
+        const body = await readJson(req, 8 * 1024);
+        if (m[2] === 'feature') {
+          const on = body.on !== false;
+          const ok = await orders.setFeatured(o.id, on, body.note);
+          return send(res, ok ? 200 : 409, { ok, featured: on });
+        }
+        if (o.radioAiredAt) return send(res, 409, { error: 'that record has had its spin' });
+        const n = Number(body.track);
+        const tracks = await orders.tracks(o.id);
+        if (!Number.isInteger(n) || n < 1 || n > tracks.length || !tracks[n - 1].file) return send(res, 400, { error: `track must be 1 to ${tracks.length}` });
+        const ok = await orders.requestRadio(o.id, n - 1);
+        if (ok) log(`radio spin requested: ${o.publicId} track ${n} (${tracks[n - 1].title})`);
+        return send(res, ok ? 200 : 409, { ok, track: n, title: tracks[n - 1].title });
+      }
+
       if ((m = /^\/album\/([A-Za-z0-9_-]{16,32})\/file\/([^/]+)$/.exec(p))) {
         const o = await orders.getByPublicId(m[1]);
         if (!o || !['building', 'delivered'].includes(o.state)) return send(res, 404, 'not found', 'text/plain');
@@ -152,6 +198,18 @@ async function main() {
         const auth = req.headers.authorization || '';
         if (!cfg.adminToken || auth !== `Bearer ${cfg.adminToken}`) return send(res, cfg.adminToken ? 401 : 503, { error: cfg.adminToken ? 'unauthorized' : 'admin token not set' });
         if (p === '/admin/orders' && req.method === 'GET') return send(res, 200, { orders: await orders.recent(100) });
+        if (p === '/admin/radio/queue' && req.method === 'GET') {
+          const q = await orders.radioQueue();
+          return send(res, 200, {
+            queue: await Promise.all(q.map(async (o) => {
+              const t = (await orders.tracks(o.id))[o.radioTrackIdx];
+              return { orderId: o.id, publicId: o.publicId, album: o.brief.albumTitle, track: o.radioTrackIdx + 1, title: t && t.title, file: t && path.join(orderDir(o), t.file), requestedAt: o.radioRequestedAt };
+            })),
+          });
+        }
+        if ((m = /^\/admin\/orders\/([0-9a-f-]{36})\/radio\/aired$/.exec(p)) && req.method === 'POST') {
+          return send(res, 200, { ok: await orders.markRadioAired(m[1]) });
+        }
         if ((m = /^\/admin\/orders\/([0-9a-f-]{36})\/(comp|retry|cancel)$/.exec(p)) && req.method === 'POST') {
           const o = await orders.get(m[1]);
           if (!o) return send(res, 404, { error: 'not found' });
@@ -196,6 +254,7 @@ async function main() {
 
       // ---- static pages -------------------------------------------------------
       if (p === '/' || p === '/desk') return html(res, 200, 'index.html', { NPC: esc(cfg.npcName) });
+      if (p === '/desk/') return send(res, 301, '', 'text/plain', { location: '/desk' });
       if (/^\/[a-z0-9-]+\.(css|js)$/.test(p)) {
         const f = path.join(PUBLIC, p.slice(1));
         if (fs.existsSync(f)) return send(res, 200, fs.readFileSync(f), p.endsWith('.css') ? 'text/css; charset=utf-8' : 'application/javascript; charset=utf-8', { 'cache-control': 'public, max-age=300' });
