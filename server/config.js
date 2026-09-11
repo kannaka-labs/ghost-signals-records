@@ -27,6 +27,20 @@ module.exports = {
     webhookSecret: env('STRIPE_WEBHOOK_SECRET', ''),
   },
 
+  // The free door. `auto` (default) gives albums away while no card can be
+  // taken, and closes itself the moment Stripe is configured. `on` keeps it
+  // open alongside payments; `off` shuts it. The caps are what stop one
+  // visitor, or one loud day, from spending the generator's whole balance.
+  free: {
+    mode: env('GSR_FREE_MODE', 'auto'),
+    dailyLimit: int('GSR_FREE_DAILY_LIMIT', 3),
+    visitorLimit: int('GSR_FREE_VISITOR_LIMIT', 1),
+    maxTier: env('GSR_FREE_MAX_TIER', 'album'),
+    minCredits: int('GSR_FREE_MIN_CREDITS', 100),
+    creditsPerTrack: int('GSR_CREDITS_PER_TRACK', 10),
+    windowHours: int('GSR_FREE_WINDOW_HOURS', 24),
+  },
+
   suno: {
     key: env('SUNO_API_KEY', ''),
     model: env('SUNO_MODEL', 'V4_5PLUS'),

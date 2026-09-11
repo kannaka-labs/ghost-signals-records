@@ -15,6 +15,7 @@ const { Kax } = require('./kax');
 const { readBody, readJson } = require('./read-body');
 const { TIERS, PALETTE, ART_DIRECTIONS } = require('./catalog');
 const { orderDir, buildCover, safeName } = require('./worker');
+const { Suno } = require('./suno');
 const { Atelier } = require('./art');
 
 const log = (m) => console.log(`[records ${new Date().toISOString()}] ${m}`);
@@ -56,7 +57,8 @@ async function main() {
   const db = await new Db(path.join(cfg.dataDir, 'records.sqlite')).open();
   const orders = new Orders(db, cfg);
   const stripe = new Stripe(cfg, orders, log);
-  const desk = new Desk(cfg, orders, stripe, log);
+  const suno = cfg.suno.key ? new Suno({ ...cfg.suno, userAgent: cfg.userAgent }) : null;
+  const desk = new Desk(cfg, orders, stripe, log, suno);
   const kax = cfg.kax.agentToken && cfg.kax.storey ? new Kax({ ...cfg.kax, userAgent: cfg.userAgent }) : null;
   const tower = new Tower(cfg, db, orders, desk, kax, log);
 
@@ -66,8 +68,24 @@ async function main() {
     const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
     try {
       // ---- health + catalog ------------------------------------------
-      if (p === '/api/health') return send(res, 200, { ok: true, payments: stripe.enabled(), tower: tower.enabled(), npc: cfg.npcName, storey: cfg.kax.storey || null });
-      if (p === '/api/catalog') return send(res, 200, { tiers: Object.values(TIERS).map((t) => ({ ...t, priceCents: cfg.prices[t.key] })), currency: cfg.currency, palette: PALETTE.map(({ key, label }) => ({ key, label })), artDirections: ART_DIRECTIONS });
+      if (p === '/api/health') {
+        const f = cfg.free || {};
+        const freeOpen = f.mode === 'on' || (f.mode !== 'off' && !stripe.enabled());
+        const since = new Date(Date.now() - (f.windowHours || 24) * 3600 * 1000).toISOString();
+        return send(res, 200, {
+          ok: true,
+          payments: stripe.enabled(),
+          tower: tower.enabled(),
+          npc: cfg.npcName,
+          storey: cfg.kax.storey || null,
+          free: { open: freeOpen, mode: f.mode, grantedInWindow: await orders.freeGrantedSince(since), dailyLimit: f.dailyLimit, maxTier: f.maxTier },
+        });
+      }
+      if (p === '/api/credits') {
+        const c = suno ? await suno.credits() : null;
+        return send(res, 200, { credits: c, perTrackEstimate: (cfg.free || {}).creditsPerTrack, floor: (cfg.free || {}).minCredits });
+      }
+      if (p === '/api/catalog') return send(res, 200, { tiers: Object.values(TIERS).map((t) => ({ ...t, priceCents: cfg.prices[t.key] })), currency: cfg.currency, palette: PALETTE.map(({ key, label }) => ({ key, label })), artDirections: ART_DIRECTIONS, freeOpen: desk.freeDoorOpen(), freeMaxTier: (cfg.free || {}).maxTier });
 
       // ---- the desk, on the web -----------------------------------------
       if (p === '/api/desk' && req.method === 'POST') {

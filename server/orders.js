@@ -115,6 +115,36 @@ class Orders {
     return { ok: moved };
   }
 
+  /** The house gives an album away under the free policy. A separate ledger
+   *  kind from `comp` so the two are countable apart: one is the operator's
+   *  decision, the other is the door standing open. */
+  async grantFree(order, reason) {
+    if (order.state !== 'quoted') return { ok: false, reason: `state ${order.state}` };
+    await this.ledger(`free:${order.id}`, order.id, 'free', 0, order.currency, String(reason || '').slice(0, 200));
+    const moved = await this.move(order.id, 'quoted', 'paid', { paid_at: now(), comped_at: now() });
+    return { ok: moved };
+  }
+
+  /** How many free albums were granted since an ISO timestamp. */
+  async freeGrantedSince(sinceIso) {
+    const r = await this.db.get('SELECT COUNT(*) AS n FROM ledger WHERE kind=? AND created_at >= ?', ['free', sinceIso]);
+    return (r && r.n) || 0;
+  }
+
+  /** How many free albums this visitor already has. A web visitor is named by
+   *  their session; a city visitor by their principal. */
+  async freeGrantedTo({ principal, sessionId }) {
+    if (principal) {
+      const r = await this.db.get('SELECT COUNT(*) AS n FROM ledger l JOIN orders o ON o.id = l.order_id WHERE l.kind=? AND o.principal=?', ['free', principal]);
+      return (r && r.n) || 0;
+    }
+    if (sessionId) {
+      const r = await this.db.get('SELECT COUNT(*) AS n FROM ledger l JOIN orders o ON o.id = l.order_id JOIN sessions s ON s.order_id = o.id WHERE l.kind=? AND s.id=?', ['free', sessionId]);
+      return (r && r.n) || 0;
+    }
+    return 0;
+  }
+
   async listByState(state, limit = 50) {
     return (await this.db.all('SELECT * FROM orders WHERE state=? ORDER BY updated_at ASC LIMIT ?', [state, limit])).map(hydrate);
   }

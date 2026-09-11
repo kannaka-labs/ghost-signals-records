@@ -74,9 +74,16 @@ function line(state, ctx) {
       return `The cover. Describe what you want to see, or pick: ${ART_DIRECTIONS.slice(0, 3).map((a, i) => `(${i + 1}) ${a}`).join('; ')}. Or say "skip" and I will read the theme.`;
     case 'confirm': {
       const price = ctx.prices[b.tier];
-      return `Here is the brief. "${b.albumTitle}", ${tier.label.toLowerCase()}, ${tier.tracks} tracks: ${b.trackTitles.join(' · ')}. Sound: ${b.style.slice(0, 160)}${b.style.length > 160 ? '…' : ''}. Cover: ${b.artDirection || 'from the theme'}. ${dollars(price)}. Say "confirm" and I will hand you the payment link; say "change" and tell me what.`;
+      const brief = `Here is the brief. "${b.albumTitle}", ${tier.label.toLowerCase()}, ${tier.tracks} tracks: ${b.trackTitles.join(' · ')}. Sound: ${b.style.slice(0, 160)}${b.style.length > 160 ? '…' : ''}. Cover: ${b.artDirection || 'from the theme'}.`;
+      return ctx.freeOpen
+        ? `${brief} The house is covering albums while its credits last, so there is nothing to pay. Say "confirm" and I will send it to the floor; say "change" and tell me what.`
+        : `${brief} ${dollars(price)}. Say "confirm" and I will hand you the payment link; say "change" and tell me what.`;
     }
     case 'checkout':
+      if (ctx.freeUrl) {
+        return `On the house while the studio's credits last. I have already sent it to the floor. Your album page: ${ctx.freeUrl} . It fills in as each track finishes, an hour or two for the lot.`;
+      }
+      if (ctx.heldLine) return ctx.heldLine;
       return `The link is ready: ${ctx.checkoutUrl || '(payment is not configured yet; the operator has been told)'} . When it clears, the studio starts. Building takes an hour or two; the page is yours the moment it is done.`;
     case 'done':
       return `Paid, and the studio is on it. Your album page: ${ctx.albumUrl || '(pending)'} . Come back any time.`;

@@ -58,6 +58,19 @@ class Suno {
     return j.data.taskId;
   }
 
+  /** Credits remaining on the generator account, or null if it will not say.
+   *  `/api/v1/generate/credit` is the endpoint that exists; `get-credits`
+   *  404s. */
+  async credits() {
+    try {
+      const r = await request('GET', `${this.base}/api/v1/generate/credit`, { headers: this.headers(false), timeoutMs: 20000 });
+      const j = JSON.parse(r.body.toString('utf8'));
+      return typeof j.data === 'number' ? j.data : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** One poll. Returns { status, clips: [{audioUrl, duration, title}] }. */
   async status(taskId) {
     const r = await request('GET', `${this.base}/api/v1/generate/record-info?taskId=${encodeURIComponent(taskId)}`, { headers: this.headers(false) });

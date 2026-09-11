@@ -109,7 +109,10 @@ test('the desk turns persist a session and create the order at the quote', async
   r = await say('confirm');
   assert.ok(r.order, 'an order exists at the quote');
   assert.equal(r.order.state, 'quoted');
-  assert.match(r.reply, /payment is not configured/);
+  // No card can be taken and no generator is wired, so neither door opens and
+  // the order is held with the reason said plainly.
+  assert.match(r.reply, /held as/);
+  assert.match(r.reply, /did not report its credits/);
   const again = await orders.sessionFor('kax:agent:9', 'tower');
   assert.equal(again.orderId, r.order.id, 'the session remembers its order');
   await db.close();

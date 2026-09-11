@@ -49,7 +49,10 @@
   }
 
   fetch('/api/catalog').then(function (r) { return r.json(); }).then(function (c) {
-    document.getElementById('prices').textContent = c.tiers.map(function (t) { return t.label + ' $' + (t.priceCents / 100).toFixed(0); }).join(' · ');
+    var list = c.tiers.map(function (t) { return t.label + ' $' + (t.priceCents / 100).toFixed(0); }).join(' · ');
+    document.getElementById('prices').textContent = c.freeOpen
+      ? list + ' — but the house is covering albums up to ' + (c.freeMaxTier || 'album') + ' size while its credits last, so today there is nothing to pay'
+      : list;
   }).catch(function () {});
 
   post({}).then(function (r) { session = r.session; line('npc', r.reply); }).catch(function () { line('npc', 'The desk is not answering. Try again in a moment.'); });
