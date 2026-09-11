@@ -4,7 +4,6 @@
   var $ = function (id) { return document.getElementById(id); };
   var id = document.querySelector('main.album-page').dataset.id;
   var album = null;
-  var polling = false;
 
   function fmt(s) { s = Math.round(s || 0); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
 
@@ -26,7 +25,11 @@
     }
   }
   $('transport').addEventListener('click', function () {
-    if (!current) { var first = (album.tracks || []).filter(function (t) { return t.file; })[0]; if (first) playTrack(first); return; }
+    if (!current) {
+      var first = ((album && album.tracks) || []).filter(function (t) { return t.file; })[0];
+      if (first) playTrack(first);
+      return;
+    }
     if (audio.paused) audio.play(); else audio.pause();
   });
   $('player-close').addEventListener('click', function () { audio.pause(); player.hidden = true; });
@@ -110,8 +113,8 @@
     }
 
     mark();
-    if ((a.state === 'building' || a.state === 'paid') && !polling) { polling = true; setTimeout(load, 20000); }
-    else if (a.state === 'building' || a.state === 'paid') setTimeout(load, 20000);
+    // While the floor is still working, look again in twenty seconds.
+    if (a.state === 'building' || a.state === 'paid') setTimeout(load, 20000);
   }
 
   function load() {
