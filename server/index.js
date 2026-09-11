@@ -16,6 +16,7 @@ const { readBody, readJson } = require('./read-body');
 const { TIERS, PALETTE, ART_DIRECTIONS } = require('./catalog');
 const { orderDir, buildCover, safeName } = require('./worker');
 const { Suno } = require('./suno');
+const { smtpSend } = require('./mail');
 const { Atelier } = require('./art');
 
 const log = (m) => console.log(`[records ${new Date().toISOString()}] ${m}`);
@@ -156,7 +157,27 @@ async function main() {
         const tracks = await orders.tracks(o.id);
         if (!Number.isInteger(n) || n < 1 || n > tracks.length || !tracks[n - 1].file) return send(res, 400, { error: `track must be 1 to ${tracks.length}` });
         const ok = await orders.requestRadio(o.id, n - 1);
-        if (ok) log(`radio spin requested: ${o.publicId} track ${n} (${tracks[n - 1].title})`);
+        if (ok) {
+          log(`radio spin requested: ${o.publicId} track ${n} (${tracks[n - 1].title})`);
+          // The spin needs a person to put it on the air, so tell one.
+          if (cfg.mail.operator) {
+            smtpSend(cfg.mail, {
+              to: cfg.mail.operator,
+              subject: `[records] radio spin: ${o.brief.albumTitle}, track ${n}`,
+              text: `"${tracks[n - 1].title}" from "${o.brief.albumTitle}" is queued for its single airing.
+
+`
+                + `File: ${path.join(orderDir(o), tracks[n - 1].file)}
+`
+                + `Album: ${cfg.publicUrl}/album/${o.publicId}
+`
+                + `Queue: GET /admin/radio/queue
+`
+                + `When it has aired: POST /admin/orders/${o.id}/radio/aired
+`,
+            }).catch(() => {});
+          }
+        }
         return send(res, ok ? 200 : 409, { ok, track: n, title: tracks[n - 1].title });
       }
 
