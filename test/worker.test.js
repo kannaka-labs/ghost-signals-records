@@ -65,6 +65,29 @@ test('a paid order builds every track, a placeholder cover, a manifest, and is d
   await db.close();
 });
 
+test('a task that dies on the generator side gets one fresh task', async () => {
+  const db = await new Db(path.join(tmp, 'r3.sqlite')).open();
+  const orders = new Orders(db, cfg);
+  const o = await orders.createFromBrief(BRIEF, { origin: 'web' });
+  await orders.comp(o, 'test');
+  const claimed = await orders.claimNextBuild();
+  let n = 0;
+  const flaky = {
+    async generate() { n += 1; return `task-${n}`; },
+    async wait(taskId) {
+      if (taskId === 'task-1') throw Object.assign(new Error('suno task task-1: GENERATE_AUDIO_FAILED'), { status: 'GENERATE_AUDIO_FAILED' });
+      return { status: 'SUCCESS', clips: [{ audioUrl: `https://cdn/${taskId}`, duration: 100 }] };
+    },
+    async download(url, file) { fs.writeFileSync(file, url); return 1; },
+  };
+  const manifest = await worker.buildOrder(orders, claimed, { suno: flaky, atelier: null, wait: {} });
+  assert.equal(manifest.tracks.length, 4);
+  assert.equal(n, 5, 'one extra task for the one that died');
+  const t = (await orders.tracks(claimed.id))[0];
+  assert.equal(t.suno_task_id, 'task-2');
+  await db.close();
+});
+
 test('a generator failure fails the order with a readable reason and a retry requeues it', async () => {
   const db = await new Db(path.join(tmp, 'r2.sqlite')).open();
   const orders = new Orders(db, cfg);

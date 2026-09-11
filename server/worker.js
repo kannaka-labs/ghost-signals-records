@@ -57,7 +57,20 @@ async function buildTrack(orders, suno, order, track, deps) {
     }
   }
   await orders.trackUpdate(order.id, track.idx, { suno_task_id: taskId, status: 'generating' });
-  const s = await suno.wait(taskId, deps.wait || {});
+  // A task can die on the generator's side (GENERATE_AUDIO_FAILED). One
+  // fresh task is tried before the order fails; a dead task id is never
+  // waited on again after a requeue.
+  let s;
+  try {
+    s = await suno.wait(taskId, deps.wait || {});
+  } catch (e) {
+    if (!/FAIL|ERROR|SENSITIVE/i.test(String(e.status || e.message))) throw e;
+    log(`track ${track.idx + 1}: task ${taskId} died (${e.message}); one fresh task`);
+    await orders.trackUpdate(order.id, track.idx, { suno_task_id: null, status: 'lyrics' });
+    taskId = await suno.generate({ title: track.title, style, lyrics: lyrics || '', instrumental: brief.instrumental });
+    await orders.trackUpdate(order.id, track.idx, { suno_task_id: taskId, status: 'generating' });
+    s = await suno.wait(taskId, deps.wait || {});
+  }
   const clip = pickClip(s.clips);
   if (!clip) throw new Error(`track ${track.idx + 1}: no audio in result`);
   await suno.download(clip.audioUrl, file);
