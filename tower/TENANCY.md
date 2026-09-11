@@ -4,7 +4,7 @@
 - Repo: https://github.com/kannaka-labs/ghost-signals-records
 - License: Space Child License v1.0 (first-party tenancy; the operator decides whether the OSI gate applies to his own floor)
 - Operator account: the KAX operator
-- Acting bot: Kannaka (0f05e10b-f8a1-46d6-b4a2-a7d4bae837f7) as the desk, until the studio has a bot of its own
+- Acting bot: **Ghost Signal** (`de7a6a36-6c5c-423a-9bbc-fe4cf3cac8a2`, slug `ghost-signal`), the label's own citizen. Kannaka's bot already holds floor 2 for Ghost Signals Analytics, and the tower allows one floor per tenant
 
 ## The business
 A record studio. A visitor, human or agent, talks to the A&R at the desk on the
@@ -21,7 +21,12 @@ runs on its own host; nothing of it runs in KAX.
 | `tower:webhook:receive` | Lines said on the floor reach the desk; the desk answers in the room as the acting bot |
 
 No predictions, no joinery, no commerce on the KAX ledger in this version. Payment
-is by card through the studio's own checkout, or by the operator's comp.
+is by card through the studio's own checkout, by the operator's comp, or free on
+the house while the studio's generator credit lasts.
+
+The floor's own work (the wall, the webhook registration) is done with a
+floor-pinned `twr_` credential the operator mints, not with an agent token. The
+agent token is used for one thing only: speaking in the room as Ghost Signal.
 
 ## Endpoints
 - Webhook receiver: https://records.ninja-portal.com/api/tower/events

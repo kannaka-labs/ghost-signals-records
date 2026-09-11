@@ -59,7 +59,7 @@ async function main() {
   const stripe = new Stripe(cfg, orders, log);
   const suno = cfg.suno.key ? new Suno({ ...cfg.suno, userAgent: cfg.userAgent }) : null;
   const desk = new Desk(cfg, orders, stripe, log, suno);
-  const kax = cfg.kax.agentToken && cfg.kax.storey ? new Kax({ ...cfg.kax, userAgent: cfg.userAgent }) : null;
+  const kax = (cfg.kax.agentToken || cfg.kax.towerCredential) && cfg.kax.storey ? new Kax({ ...cfg.kax, userAgent: cfg.userAgent }) : null;
   const tower = new Tower(cfg, db, orders, desk, kax, log);
 
   const server = http.createServer(async (req, res) => {
@@ -78,6 +78,7 @@ async function main() {
           tower: tower.enabled(),
           npc: cfg.npcName,
           storey: cfg.kax.storey || null,
+          floor: { canWrite: Boolean(kax && kax.canWriteFloor()), canSpeak: Boolean(kax && kax.canSpeak()) },
           free: { open: freeOpen, mode: f.mode, grantedInWindow: await orders.freeGrantedSince(since), dailyLimit: f.dailyLimit, maxTier: f.maxTier },
         });
       }
@@ -182,6 +183,14 @@ async function main() {
           return send(res, 200, { ok: source !== 'placeholder', source });
         }
         if (p === '/admin/panel' && req.method === 'POST' && kax) { const body = await readJson(req); return send(res, 200, await kax.panel(body)); }
+        if (p === '/admin/tower/webhook' && req.method === 'POST' && kax) {
+          const body = await readJson(req);
+          const url = typeof body.url === 'string' && body.url ? body.url : `${cfg.publicUrl}/api/tower/events`;
+          const r = await kax.registerWebhook(url);
+          // The secret is shown once by the tower; it is the operator's to
+          // place in the env file. Never logged, never stored here.
+          return send(res, r.status === 200 ? 200 : 502, { url, ...r.json });
+        }
         return send(res, 404, { error: 'not found' });
       }
 

@@ -72,7 +72,7 @@ class Tower {
       const r = await this.desk.turn(session, text, { principal: speaker, origin: 'tower' });
       reply = r.reply;
     }
-    if (this.kax && this.cfg.kax.agentToken && this.cfg.kax.storey) {
+    if (this.kax && this.kax.canSpeak()) {
       // The room caps line length; long replies go in two.
       const parts = splitForRoom(reply, 460);
       for (const part of parts) await this.kax.say(part);

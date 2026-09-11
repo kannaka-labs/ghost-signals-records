@@ -64,10 +64,16 @@ module.exports = {
     gapMs: int('OBC_ART_GAP_MS', 95000),
   },
 
-  // KAX City: the tower floor and the NPC bot's agent token.
+  // KAX City. Two credentials, deliberately different in reach:
+  //   towerCredential (`twr_…`, minted by the operator, pinned to one floor)
+  //     writes the wall and registers the webhook. That is all it can do.
+  //   agentToken is the studio's bot in the city, and is the ONLY thing that
+  //     can speak in the room. Without it the desk still answers on the web
+  //     and still hears the floor; it just says nothing aloud there.
   kax: {
     base: env('KAX_API_BASE', 'https://kax.ninja-portal.com/api'),
     agentToken: env('KAX_AGENT_TOKEN', ''),
+    towerCredential: env('KAX_TOWER_CREDENTIAL', ''),
     storey: int('KAX_TOWER_STOREY', 0),
     webhookSecret: env('TOWER_WEBHOOK_SECRET', ''),
   },
