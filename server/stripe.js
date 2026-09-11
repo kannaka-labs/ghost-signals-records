@@ -47,7 +47,13 @@ class Stripe {
     const c = core.classifyWebhookEvent(event);
     if (c.kind === 'ignore') return { status: 200, body: 'ignored' };
     if (c.kind === 'paid') {
-      const order = c.orderId ? await this.orders.get(c.orderId) : (c.paymentIntent ? await this.orders.getByPaymentIntent(c.paymentIntent) : null);
+      // An event that names no order at all is not ours: the dashboard's
+      // "send test webhook" sends exactly that. Answer 200 so it shows green
+      // and Stripe does not retry a synthetic event forever. An event that
+      // DOES name an order we cannot find is a real one arriving early or a
+      // database we cannot read: 500, so Stripe retries.
+      if (!c.orderId && !c.paymentIntent) return { status: 200, body: 'no order reference; ignored' };
+      const order = c.orderId ? await this.orders.get(c.orderId) : await this.orders.getByPaymentIntent(c.paymentIntent);
       if (!order) return { status: 500, body: 'order not found; retry' };
       const r = await this.orders.markPaid(order, { amountCents: c.amountCents, currency: c.currency, sessionId: c.sessionId, paymentIntent: c.paymentIntent, eventId: event.id });
       if (!r.ok) { this.log(`stripe: ${r.reason} for order ${order.id}`); return { status: 200, body: r.reason }; }

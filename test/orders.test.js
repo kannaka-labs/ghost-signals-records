@@ -68,6 +68,10 @@ test('the stripe webhook verifies, pays, ignores, and asks for a retry when the 
   assert.equal((await stripe.webhook(s.raw, 't=1,v1=00')).status, 400);
   s = signed({ ...ev, id: 'evt_2', data: { object: { ...ev.data.object, client_reference_id: 'nope', payment_intent: 'pi_x' } } }, 'whsec_test');
   assert.equal((await stripe.webhook(s.raw, s.header)).status, 500, 'unknown order: make stripe retry');
+  s = signed({ id: 'evt_test', type: 'checkout.session.completed', data: { object: { id: 'cs_test', payment_status: 'paid', amount_total: 2000, currency: 'usd' } } }, 'whsec_test');
+  const t = await stripe.webhook(s.raw, s.header);
+  assert.equal(t.status, 200, "a dashboard test event names no order: green, not a retry");
+  assert.match(t.body, /no order reference/);
   s = signed({ id: 'evt_3', type: 'charge.dispute.created', data: { object: { id: 'dp', payment_intent: 'pi_1' } } }, 'whsec_test');
   assert.equal((await stripe.webhook(s.raw, s.header)).status, 200);
   assert.ok((await orders.get(o.id)).disputedAt);
