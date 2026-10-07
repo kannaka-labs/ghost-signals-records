@@ -88,6 +88,20 @@ module.exports = {
     operator: env('GSR_OPERATOR_EMAIL', ''),
   },
 
+  // The record store: finished albums as downloads, paid in USDC on Base.
+  // Receive-only: the address takes money, the server holds no key. Without
+  // an address or a download secret the catalog shows and nothing sells.
+  store: {
+    payTo: env('GSR_USDC_PAY_TO', ''),
+    rpcUrls: env('GSR_BASE_RPC_URLS', 'https://base-rpc.publicnode.com,https://mainnet.base.org').split(',').map((s) => s.trim()).filter(Boolean),
+    priceMicro: int('GSR_STORE_PRICE_MICRO', 5000000), // 5 USDC
+    confirmations: int('GSR_USDC_CONFIRMATIONS', 3),
+    downloadSecret: env('GSR_DOWNLOAD_SECRET', ''),
+    tokenHours: int('GSR_DOWNLOAD_TOKEN_HOURS', 72),
+    scanMs: int('GSR_USDC_SCAN_MS', 15000),
+    previewSec: int('GSR_PREVIEW_SEC', 45),
+  },
+
   npcName: env('GSR_NPC_NAME', 'Vesper'),
   userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36 GhostSignalsRecords/0.1',
 };

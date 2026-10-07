@@ -18,6 +18,8 @@ const { orderDir, buildCover, safeName } = require('./worker');
 const { Suno } = require('./suno');
 const { smtpSend } = require('./mail');
 const { Atelier } = require('./art');
+const { Store } = require('./store');
+const { microToUsdc } = require('./store-core');
 
 const log = (m) => console.log(`[records ${new Date().toISOString()}] ${m}`);
 const PUBLIC = path.join(__dirname, '..', 'public');
@@ -62,11 +64,13 @@ async function main() {
   const desk = new Desk(cfg, orders, stripe, log, suno);
   const kax = (cfg.kax.agentToken || cfg.kax.towerCredential) && cfg.kax.storey ? new Kax({ ...cfg.kax, userAgent: cfg.userAgent }) : null;
   const tower = new Tower(cfg, db, orders, desk, kax, log);
+  const store = new Store(db, cfg, { log, ffmpeg: process.env.GSR_FFMPEG === '' ? null : (process.env.GSR_FFMPEG || 'ffmpeg') });
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     const p = url.pathname;
     const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+    let m;
     try {
       // ---- health + catalog ------------------------------------------
       if (p === '/api/health') {
@@ -81,7 +85,81 @@ async function main() {
           storey: cfg.kax.storey || null,
           floor: { canWrite: Boolean(kax && kax.canWriteFloor()), canSpeak: Boolean(kax && kax.canSpeak()) },
           free: { open: freeOpen, mode: f.mode, grantedInWindow: await orders.freeGrantedSince(since), dailyLimit: f.dailyLimit, maxTier: f.maxTier },
+          store: { selling: store.enabled(), releases: (await store.catalog()).length },
         });
+      }
+
+      // ---- the record store: finished albums, paid in USDC on Base ---------
+      if (p === '/api/store') {
+        const releases = await store.catalog();
+        return send(res, 200, {
+          selling: store.enabled(),
+          price: releases.length ? releases[0].price : undefined,
+          payTo: store.enabled() ? store.paymentTerms({ publicId: '-', amountMicro: cfg.store.priceMicro }).payTo : null,
+          releases: releases.map((r) => publicRelease(r)),
+        }, undefined, { 'cache-control': 'public, max-age=60' });
+      }
+      if ((m = /^\/api\/store\/([a-z0-9-]{1,48})$/.exec(p)) && req.method === 'GET') {
+        const r = await store.release(m[1]);
+        if (!r) return send(res, 404, { error: 'no such record' });
+        return send(res, 200, { selling: store.enabled(), ...publicRelease(r) }, undefined, { 'cache-control': 'public, max-age=60' });
+      }
+      // Open a purchase. Returns the terms (address, amount, calldata). The
+      // same body serves an agent as a 402: send the USDC, then POST the tx.
+      if ((m = /^\/api\/store\/([a-z0-9-]{1,48})\/buy$/.exec(p)) && req.method === 'POST') {
+        if (!allow(ip, 10)) return send(res, 429, { error: 'slow down' });
+        const body = await readJson(req, 4 * 1024);
+        const email = typeof body.email === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(body.email) ? body.email.trim().slice(0, 200) : undefined;
+        const purchase = await store.buy(m[1], { email, fromAddr: typeof body.from === 'string' ? body.from : undefined });
+        return send(res, 402, { purchase: publicPurchase(purchase, store, cfg), payment: store.paymentTerms(purchase) });
+      }
+      if ((m = /^\/api\/purchase\/([A-Za-z0-9_-]{16,32})$/.exec(p)) && req.method === 'GET') {
+        const purchase = await store.purchase(m[1]);
+        if (!purchase) return send(res, 404, { error: 'not found' });
+        const rel = await store.release(purchase.sku, { includeUnpublished: true });
+        return send(res, 200, { purchase: publicPurchase(purchase, store, cfg), payment: purchase.state === 'awaiting' ? store.paymentTerms(purchase) : null, release: rel ? publicRelease(rel) : null });
+      }
+      if ((m = /^\/api\/purchase\/([A-Za-z0-9_-]{16,32})\/tx$/.exec(p)) && req.method === 'POST') {
+        if (!allow(ip, 40)) return send(res, 429, { error: 'slow down' });
+        const purchase = await store.purchase(m[1]);
+        if (!purchase) return send(res, 404, { error: 'not found' });
+        const body = await readJson(req, 2 * 1024);
+        const r = await store.claimTx(purchase, body.hash);
+        const fresh = await store.purchase(m[1]);
+        return send(res, r.ok ? 200 : 409, { ...r, purchase: publicPurchase(fresh, store, cfg) });
+      }
+      // The zip, behind a signed, expiring token. The purchase page mints a
+      // fresh token on every visit, so the page is the durable link.
+      if ((m = /^\/dl\/([A-Za-z0-9_-]{16,32})$/.exec(p))) {
+        const purchase = await store.purchase(m[1]);
+        if (!purchase || purchase.state !== 'paid') return send(res, 404, 'not found', 'text/plain');
+        if (!store.verifyToken(purchase.publicId, url.searchParams.get('t'))) return send(res, 403, 'this download link has expired; open your purchase page for a fresh one', 'text/plain');
+        const rel = await store.release(purchase.sku, { includeUnpublished: true });
+        const file = rel && path.join(store.dir(rel.sku), rel.zipFile);
+        if (!file || !fs.existsSync(file)) return send(res, 404, 'not found', 'text/plain');
+        const st = fs.statSync(file);
+        res.writeHead(200, { 'content-type': 'application/zip', 'content-length': st.size, 'content-disposition': `attachment; filename="${rel.zipFile}"`, 'cache-control': 'private, no-store' });
+        return fs.createReadStream(file).pipe(res);
+      }
+      // Public files of a release: the cover and the previews.
+      if ((m = /^\/store\/([a-z0-9-]{1,48})\/(cover\.(?:png|jpg)|preview-\d{2}\.mp3)$/.exec(p))) {
+        const r = await store.release(m[1]);
+        if (!r) return send(res, 404, 'not found', 'text/plain');
+        const file = path.join(store.dir(r.sku), m[2]);
+        if (!fs.existsSync(file)) return send(res, 404, 'not found', 'text/plain');
+        return send(res, 200, fs.readFileSync(file), m[2].endsWith('.mp3') ? 'audio/mpeg' : m[2].endsWith('.jpg') ? 'image/jpeg' : 'image/png', { 'cache-control': 'public, max-age=86400' });
+      }
+      if (p === '/store' || p === '/store/') return html(res, 200, 'store.html');
+      if ((m = /^\/store\/([a-z0-9-]{1,48})$/.exec(p))) {
+        const r = await store.release(m[1]);
+        if (!r) return html(res, 404, 'notfound.html');
+        return html(res, 200, 'release.html', { SKU: esc(r.sku), TITLE: esc(r.title), PID: '' });
+      }
+      if ((m = /^\/p\/([A-Za-z0-9_-]{16,32})$/.exec(p))) {
+        const purchase = await store.purchase(m[1]);
+        const r = purchase && await store.release(purchase.sku, { includeUnpublished: true });
+        if (!r) return html(res, 404, 'notfound.html');
+        return html(res, 200, 'release.html', { SKU: esc(r.sku), TITLE: esc(r.title), PID: esc(purchase.publicId) });
       }
       if (p === '/api/credits') {
         const c = suno ? await suno.credits() : null;
@@ -131,7 +209,6 @@ async function main() {
       }
 
       // ---- an order's public state + files ----------------------------------
-      let m;
       if ((m = /^\/api\/album\/([A-Za-z0-9_-]{16,32})$/.exec(p))) {
         const o = await orders.getByPublicId(m[1]);
         if (!o) return send(res, 404, { error: 'not found' });
@@ -261,6 +338,17 @@ async function main() {
           const source = await buildCover(o, atelier);
           return send(res, 200, { ok: source !== 'placeholder', source });
         }
+        // The store's admin: publish a finished album from files on this
+        // machine, list sales, give one away, nudge the chain watcher.
+        if (p === '/admin/releases' && req.method === 'POST') return send(res, 200, await store.publish(await readJson(req, 64 * 1024)));
+        if ((m = /^\/admin\/releases\/([a-z0-9-]{1,48})\/unpublish$/.exec(p)) && req.method === 'POST') return send(res, 200, { ok: await store.unpublish(m[1]) });
+        if (p === '/admin/purchases' && req.method === 'GET') return send(res, 200, { purchases: await store.purchases(), unmatched: await store.unmatched() });
+        if ((m = /^\/admin\/purchases\/([0-9a-f-]{36})\/comp$/.exec(p)) && req.method === 'POST') {
+          const purchase = await store.purchaseById(m[1]);
+          if (!purchase) return send(res, 404, { error: 'not found' });
+          return send(res, 200, await store.comp(purchase, 'admin'));
+        }
+        if (p === '/admin/store/scan' && req.method === 'POST') return send(res, 200, await store.scan());
         if (p === '/admin/panel' && req.method === 'POST' && kax) { const body = await readJson(req); return send(res, 200, await kax.panel(body)); }
         if (p === '/admin/tower/webhook' && req.method === 'POST' && kax) {
           const body = await readJson(req);
@@ -288,10 +376,31 @@ async function main() {
     }
   });
 
-  server.on('close', () => db.close());
+  server.on('close', () => { store.stop(); db.close(); });
   await new Promise((resolve) => server.listen(cfg.port, cfg.bind, resolve));
-  log(`listening on ${cfg.bind}:${server.address().port}; payments ${stripe.enabled() ? 'on' : 'OFF (503)'}; tower ${tower.enabled() ? 'on' : 'OFF (503)'}; kax agent ${kax ? 'on' : 'off'}; brain ${cfg.brain.key ? 'on' : 'off'}`);
+  store.start();
+  log(`listening on ${cfg.bind}:${server.address().port}; payments ${stripe.enabled() ? 'on' : 'OFF (503)'}; store ${store.enabled() ? 'selling (USDC on Base)' : 'catalog only'}; tower ${tower.enabled() ? 'on' : 'OFF (503)'}; kax agent ${kax ? 'on' : 'off'}; brain ${cfg.brain.key ? 'on' : 'off'}`);
+  server.store = store;
   return server;
+}
+
+/** A release as the public sees it: files by URL, never by path. */
+function publicRelease(r) {
+  return {
+    sku: r.sku, title: r.title, artist: r.artist, year: r.year, blurb: r.blurb, price: r.price, priceMicro: String(r.priceMicro),
+    cover: r.coverFile ? `/store/${r.sku}/${r.coverFile}` : null, zipBytes: r.zipBytes,
+    tracks: r.tracks.map((t) => ({ n: t.n, title: t.title, duration: t.duration, preview: t.preview ? `/store/${r.sku}/${t.preview}` : null })),
+    url: `/store/${r.sku}`,
+  };
+}
+
+function publicPurchase(p, store, cfg) {
+  return {
+    publicId: p.publicId, sku: p.sku, state: p.state, amount: microToUsdc(p.amountMicro),
+    from: p.fromAddr, txHash: p.txHash, paidAt: p.paidAt, createdAt: p.createdAt,
+    page: `${cfg.publicUrl}/p/${p.publicId}`,
+    download: p.state === 'paid' ? `${cfg.publicUrl}/dl/${p.publicId}?t=${store.downloadToken(p.publicId)}` : null,
+  };
 }
 
 if (require.main === module) main().catch((e) => { log(`fatal: ${e.stack || e.message}`); process.exit(1); });

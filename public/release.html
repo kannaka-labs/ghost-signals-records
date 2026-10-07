@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}} · Ghost Signals Records</title>
+<link rel="stylesheet" href="/site.css">
+<link rel="stylesheet" href="/store.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="/">Ghost&nbsp;Signals <em>Records</em></a>
+  <p class="whereabouts"><a href="/store">The store</a></p>
+</header>
+
+<main class="hero album-page release-page" data-sku="{{SKU}}" data-pid="{{PID}}">
+  <div class="sleeve">
+    <img id="cover" alt="" width="640" height="640">
+  </div>
+  <div class="hero-words">
+    <h1 id="title">{{TITLE}}</h1>
+    <p class="lede" id="by"></p>
+    <p class="blurb" id="blurb"></p>
+    <ol class="tracklist" id="tracks"></ol>
+    <p class="preview-note" id="preview-note">Previews are the first forty-five seconds of each track. The download is the whole record.</p>
+
+    <section class="buy" id="buy" hidden>
+      <h2 class="section-h">Buy the record</h2>
+      <p class="buy-price"><span id="price"></span> <span class="buy-unit">USDC on Base</span> <span class="buy-what">for the mp3s, the cover art and a note on what is yours to do with them.</span></p>
+      <label class="buy-email">Email for the receipt and download link (optional)
+        <input id="email" type="email" maxlength="200" placeholder="you@example.org" autocomplete="email">
+      </label>
+      <div class="buy-ways">
+        <button class="btn" id="pay-wallet" type="button">Pay with your wallet</button>
+        <button class="btn ghost" id="pay-other" type="button">Pay from another wallet or exchange</button>
+      </div>
+      <p class="buy-said" id="buy-said"></p>
+      <div class="manual" id="manual" hidden>
+        <p>Send <strong id="m-amount"></strong> USDC on the <strong>Base</strong> network to</p>
+        <p class="addr"><code id="m-addr"></code> <button class="copy" id="copy-addr" type="button">copy</button></p>
+        <p class="buy-fine">Exactly that amount, from any wallet or exchange that can send USDC on Base. Then paste the transaction hash here and we will check it on the chain.</p>
+        <div class="claim">
+          <label class="sr" for="tx">Transaction hash</label>
+          <input id="tx" type="text" maxlength="66" placeholder="0x…" spellcheck="false">
+          <button class="btn" id="claim" type="button">Check it</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="bought" id="bought" hidden>
+      <h2 class="section-h">Yours</h2>
+      <p id="bought-said"></p>
+      <p><a class="btn" id="download" href="#" download>Download the zip</a></p>
+      <p class="buy-fine">This page is your copy. Keep its address; it issues a fresh download link every time you open it.</p>
+    </section>
+
+    <p class="hero-fine"><a href="/store">Back to the shelves</a></p>
+  </div>
+</main>
+
+<div class="player" id="player" hidden>
+  <button class="transport" id="transport" type="button" aria-label="Play"><span class="glyph" id="transport-glyph">&#9654;</span></button>
+  <div class="now">
+    <p class="now-track" id="now-track"></p>
+    <p class="now-album" id="now-album"></p>
+  </div>
+  <div class="meter" id="meter" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="meter-fill" id="meter-fill"></div></div>
+  <p class="clock" id="clock">0:00</p>
+  <button class="transport small" id="player-close" type="button" aria-label="Close the player">&times;</button>
+</div>
+<audio id="audio" preload="none"></audio>
+
+<script src="/release.js"></script>
+</body>
+</html>
