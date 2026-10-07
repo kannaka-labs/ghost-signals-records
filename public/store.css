@@ -1,31 +1,112 @@
-/* The record store, in the label's own palette (see site.css). */
+/* The record store: the shop in three dimensions, and the plain rack beside it.
+   Same palette as the label (site.css): oxide ground, bone type, amber for
+   anything you can act on, green only for the on-air lamp. */
+
+/* ---------------------------------------------------------------- the plain rack (list page + fallback) */
 .store { max-width: 1100px; margin: 0 auto; padding: 32px 16px 96px; }
 .store-head h1 { font-size: 2.2rem; margin: 0 0 8px; }
-.store-note { color: #e0872f; }
+.store-note { color: var(--amber); }
 .rack { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 28px 20px; margin-top: 28px; }
 .record { display: block; color: inherit; text-decoration: none; }
-.record img { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: cover; background: #1f1815; box-shadow: 0 10px 30px rgba(0,0,0,.45); transition: transform .25s ease; }
+.record img { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: cover; background: var(--sleeve); box-shadow: 0 10px 30px rgba(0,0,0,.45); transition: transform .25s ease; }
 .record:hover img, .record:focus-visible img { transform: translateY(-4px) rotate(-.6deg); }
 .record-words h2 { font-size: 1.05rem; margin: 12px 0 2px; }
-.record-by, .record-n { margin: 0; color: #9a8c7a; font-size: .9rem; }
-.store-empty { color: #9a8c7a; }
+.record-by, .record-n { margin: 0; color: var(--dust); font-size: .9rem; }
+.store-empty { color: var(--dust); }
+@media (max-width: 640px) { .store-head h1 { font-size: 1.7rem; } .rack { grid-template-columns: repeat(2, 1fr); gap: 18px 12px; } }
 
+/* ---------------------------------------------------------------- the release page */
 .release-page .blurb { color: #c9bda9; max-width: 56ch; }
-.preview-note { color: #9a8c7a; font-size: .9rem; }
+.preview-note { color: var(--dust); font-size: .9rem; }
 .buy, .bought { margin-top: 28px; padding-top: 20px; border-top: 1px solid rgba(236,227,212,.12); }
 .buy-price { font-size: 1.3rem; margin: 0 0 12px; }
-.buy-price .buy-unit { color: #9a8c7a; font-size: 1rem; }
+.buy-price .buy-unit { color: var(--dust); font-size: 1rem; }
 .buy-price .buy-what { display: block; color: #c9bda9; font-size: .95rem; margin-top: 4px; }
-.buy-email { display: block; color: #9a8c7a; font-size: .9rem; margin: 10px 0 14px; }
-.buy-email input { display: block; width: 100%; max-width: 360px; margin-top: 6px; padding: 10px 12px; background: #1f1815; color: #ece3d4; border: 1px solid rgba(236,227,212,.18); border-radius: 6px; font: inherit; }
+.buy-email { display: block; color: var(--dust); font-size: .9rem; margin: 10px 0 14px; }
+.buy-email input { display: block; width: 100%; max-width: 360px; margin-top: 6px; padding: 10px 12px; background: var(--sleeve); color: var(--bone); border: 1px solid rgba(236,227,212,.18); border-radius: 6px; font: inherit; }
 .buy-ways { display: flex; flex-wrap: wrap; gap: 10px; }
-.btn.ghost { background: transparent; color: #ece3d4; border: 1px solid rgba(236,227,212,.3); }
-.buy-said { min-height: 1.4em; color: #e0872f; margin: 12px 0 0; }
-.manual { margin-top: 16px; padding: 14px 16px; background: #1f1815; border-radius: 8px; }
+.btn.ghost { background: transparent; color: var(--bone); border: 1px solid rgba(236,227,212,.3); }
+.buy-said { min-height: 1.4em; color: var(--amber); margin: 12px 0 0; }
+.manual { margin-top: 16px; padding: 14px 16px; background: var(--sleeve); border-radius: 8px; }
 .manual p { margin: 0 0 8px; }
 .addr code { font-size: .95rem; word-break: break-all; }
-.copy { font: inherit; font-size: .8rem; background: transparent; color: #e0872f; border: 1px solid rgba(224,135,47,.5); border-radius: 4px; padding: 2px 8px; cursor: pointer; margin-left: 6px; }
-.buy-fine { color: #9a8c7a; font-size: .85rem; }
+.copy { font: inherit; font-size: .8rem; background: transparent; color: var(--amber); border: 1px solid rgba(224,135,47,.5); border-radius: 4px; padding: 2px 8px; cursor: pointer; margin-left: 6px; }
+.buy-fine { color: var(--dust); font-size: .85rem; }
 .claim { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-.claim input { flex: 1 1 260px; padding: 10px 12px; background: #15100d; color: #ece3d4; border: 1px solid rgba(236,227,212,.18); border-radius: 6px; font: inherit; }
-@media (max-width: 640px) { .store-head h1 { font-size: 1.7rem; } .rack { grid-template-columns: repeat(2, 1fr); gap: 18px 12px; } }
+.claim input { flex: 1 1 260px; padding: 10px 12px; background: var(--oxide); color: var(--bone); border: 1px solid rgba(236,227,212,.18); border-radius: 6px; font: inherit; }
+
+/* ---------------------------------------------------------------- the shop */
+.shop-body { overflow: hidden; height: 100dvh; padding-bottom: 0; background-image: none; }
+.shop-body.flat { overflow: auto; height: auto; padding-bottom: 5.5rem; }
+#shop { position: fixed; inset: 0; width: 100vw; height: 100dvh; display: block; touch-action: none; cursor: grab; }
+#shop:active { cursor: grabbing; }
+.flat #shop, .flat .shop-top, .flat .clerk, .flat .hold { display: none; }
+
+.shop-top { position: fixed; top: 0; left: 0; right: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: 1rem var(--gutter); pointer-events: none; z-index: 5;
+  background: linear-gradient(to bottom, rgba(21,16,13,.85), rgba(21,16,13,0)); }
+.shop-top .wordmark { pointer-events: auto; }
+.shop-hint { margin: 0; color: var(--dust); font-family: var(--gear); font-size: .85rem; opacity: 0; transition: opacity .5s; text-align: right; }
+.shop-hint.show { opacity: 1; }
+
+/* `hidden` must win over every display rule below, or a panel that was told
+   to go away stays on screen (the door did, in the first screenshots). */
+.shop-body [hidden] { display: none !important; }
+
+/* the door */
+.door { position: fixed; inset: 0; z-index: 20; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: 1rem; background: rgba(21,16,13,.78); backdrop-filter: blur(6px); transition: opacity .6s ease; }
+.door.open { opacity: 0; pointer-events: none; }
+.door-card { width: min(34rem, calc(100vw - 2rem)); min-width: 0; background: var(--sleeve); border: 1px solid var(--sleeve-edge); border-radius: 10px; padding: 2rem 2.2rem; box-shadow: 0 30px 80px rgba(0,0,0,.6); }
+.door-kicker { margin: 0 0 .3rem; color: var(--dust); font-family: var(--gear); font-size: .8rem; letter-spacing: .14em; text-transform: uppercase; }
+.door-card h1 { margin: 0 0 .8rem; font-size: 2.2rem; line-height: 1.1; }
+.door-lede { margin: 0 0 1.2rem; color: #c9bda9; }
+.door-progress { margin: 0 0 1rem; color: var(--dust); font-family: var(--gear); font-size: .9rem; }
+.door-enter { font-size: 1.05rem; padding: .8rem 1.6rem; }
+.door-enter:disabled { opacity: .45; cursor: wait; }
+.door-fine { margin: 1.2rem 0 0; color: var(--dust); font-size: .85rem; }
+
+/* the record in your hands */
+.hold { position: fixed; top: 4.6rem; right: 1.2rem; width: min(26rem, calc(100vw - 2.4rem)); max-height: calc(100dvh - 12rem); overflow: auto; z-index: 6;
+  background: rgba(31,24,21,.94); border: 1px solid var(--sleeve-edge); border-radius: 10px; padding: 1.1rem 1.3rem 1.2rem; box-shadow: 0 20px 60px rgba(0,0,0,.55); }
+.hold h2 { margin: 0 0 .5rem; font-size: 1.5rem; line-height: 1.15; padding-right: 2rem; }
+.hold-by { margin: 0 0 .15rem; color: var(--dust); font-family: var(--gear); font-size: .85rem; }
+.hold-blurb { margin: 0 0 .8rem; color: #c9bda9; font-size: .95rem; max-height: 7.5em; overflow: auto; }
+.hold-close { position: absolute; top: .6rem; right: .7rem; font: inherit; font-size: 1.4rem; line-height: 1; background: transparent; border: 0; color: var(--dust); cursor: pointer; }
+.hold-close:hover { color: var(--bone); }
+.hold-tracks { margin: 0; }
+.hold-fine { color: var(--dust); font-size: .8rem; margin: .6rem 0 .8rem; }
+.hold-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
+.hold-actions .btn { flex: 1 1 11rem; min-width: 0; text-align: center; }
+
+/* Vesper at the counter */
+.clerk { position: fixed; left: 1.2rem; bottom: 5.8rem; width: min(20rem, calc(100vw - 2.4rem)); z-index: 6;
+  background: rgba(31,24,21,.9); border: 1px solid var(--sleeve-edge); border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,.55); overflow: hidden; }
+/* Small by default: her latest line and the question box. Lean in to see the rest. */
+.clerk:not(.open) .clerk-log p:not(:last-child) { display: none; }
+.clerk:not(.open) .clerk-log { max-height: 7rem; }
+.clerk:not(.open) .clerk-log p:last-child { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.clerk-head { display: flex; align-items: center; gap: .5rem; padding: .55rem .8rem; border-bottom: 1px solid var(--sleeve-edge); font-family: var(--gear); font-size: .85rem; }
+.clerk-lamp { width: .55rem; height: .55rem; border-radius: 50%; background: var(--onair); box-shadow: 0 0 10px var(--onair); }
+.clerk-name { flex: 1; letter-spacing: .08em; text-transform: uppercase; color: var(--bone); }
+.clerk-voice { color: var(--dust); display: flex; align-items: center; gap: .3rem; cursor: pointer; }
+.clerk-min { font: inherit; background: transparent; border: 0; color: var(--dust); cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 0 .2rem; }
+.clerk-log { max-height: 11rem; overflow: auto; padding: .6rem .8rem .2rem; display: flex; flex-direction: column; gap: .45rem; }
+.clerk-log p { margin: 0; font-size: .95rem; line-height: 1.4; }
+.clerk-log .her { color: var(--bone); }
+.clerk-log .you { color: var(--dust); text-align: right; }
+.clerk-log [data-pending] { color: var(--amber); }
+.clerk-ask { display: flex; gap: .5rem; padding: .6rem .8rem .8rem; }
+.clerk-ask input { flex: 1; min-width: 0; padding: .55rem .7rem; background: var(--oxide); color: var(--bone); border: 1px solid rgba(236,227,212,.18); border-radius: 6px; font: inherit; font-size: .95rem; }
+.clerk.folded .clerk-log, .clerk.folded .clerk-ask { display: none; }
+
+.shop-player { z-index: 7; }
+
+@media (max-width: 700px) {
+  .shop-top { padding: .8rem 1rem; }
+  .shop-hint { display: none; }
+  .hold { top: auto; right: 0; left: 0; bottom: 0; width: auto; max-height: 62dvh; border-radius: 14px 14px 0 0; padding-bottom: 1.4rem; }
+  .clerk { left: .6rem; right: .6rem; width: auto; bottom: .6rem; }
+  .clerk.open .clerk-log { max-height: 7rem; }
+  .hold ~ .clerk:not(.folded) { display: none; }
+  .door-card { padding: 1.5rem 1.3rem; }
+  .door-card h1 { font-size: 1.7rem; }
+}

@@ -11,7 +11,7 @@
     img.alt = 'Cover of ' + r.title;
     img.loading = 'lazy';
     img.width = 400; img.height = 400;
-    if (r.cover) img.src = r.cover;
+    if (r.cover) img.src = r.cover.replace(/cover\.(png|jpg)$/, 'cover-512.jpg');
     var words = document.createElement('div');
     words.className = 'record-words';
     var h = document.createElement('h2'); h.textContent = r.title;

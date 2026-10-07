@@ -115,6 +115,20 @@ class Store {
     return this.release(sku);
   }
 
+  /** A 512 px JPEG of the cover for shelves and racks, made once. */
+  async thumbnail(rel) {
+    if (!this.ffmpeg || !rel || !rel.coverFile) return null;
+    const src = path.join(this.dir(rel.sku), rel.coverFile);
+    const out = path.join(this.dir(rel.sku), 'cover-512.jpg');
+    if (fs.existsSync(out)) return out;
+    if (!fs.existsSync(src)) return null;
+    const ok = await new Promise((resolve) => {
+      const [cmd, args] = gently(this.ffmpeg, ['-y', '-v', 'error', '-i', src, '-vf', 'scale=512:512:flags=lanczos', '-q:v', '4', out]);
+      execFile(cmd, args, { timeout: 30000 }, (err) => resolve(!err && fs.existsSync(out)));
+    });
+    return ok ? out : null;
+  }
+
   async unpublish(sku) {
     const r = await this.db.run('UPDATE releases SET published_at=NULL, updated_at=? WHERE sku=?', [now(), sku]);
     return r.changes === 1;
