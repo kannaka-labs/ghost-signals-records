@@ -79,6 +79,42 @@ const SCHEMA = [
      ref TEXT,
      created_at TEXT NOT NULL
    )`,
+  // The record store (store.js): finished albums for sale, and who bought
+  // them. Money lands in the same ledger, keyed by the on-chain transfer.
+  `CREATE TABLE IF NOT EXISTS releases (
+     sku TEXT PRIMARY KEY,
+     title TEXT NOT NULL,
+     artist TEXT NOT NULL,
+     year INTEGER,
+     blurb TEXT,
+     cover_file TEXT,
+     zip_file TEXT,
+     zip_bytes INTEGER,
+     tracks_json TEXT NOT NULL,
+     price_micro INTEGER NOT NULL,
+     published_at TEXT,
+     updated_at TEXT NOT NULL
+   )`,
+  `CREATE TABLE IF NOT EXISTS purchases (
+     id TEXT PRIMARY KEY,
+     public_id TEXT UNIQUE NOT NULL,
+     sku TEXT NOT NULL,
+     state TEXT NOT NULL,
+     amount_micro INTEGER NOT NULL,
+     pay_to TEXT NOT NULL,
+     from_addr TEXT,
+     from_block INTEGER,
+     email TEXT,
+     tx_hash TEXT,
+     log_index INTEGER,
+     paid_at TEXT,
+     comped_at TEXT,
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS purchases_state ON purchases(state, amount_micro, from_addr)`,
+  `CREATE INDEX IF NOT EXISTS purchases_tx ON purchases(tx_hash)`,
+  `CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT)`,
 ];
 
 class Db {
