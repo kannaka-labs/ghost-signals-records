@@ -41,6 +41,27 @@ test('without a brain she still answers, about the shelf and about payment', asy
   assert.match(v.greeting(), /Vesper/);
 });
 
+test('the agents guide is not shadowed by the record route', async () => {
+  const os = require('node:os'); const fs = require('node:fs'); const path = require('node:path');
+  process.env.GSR_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'gsr-ag-')); process.env.GSR_PORT = '0'; process.env.GSR_BIND = '127.0.0.1';
+  process.env.GSR_BASE_RPC_URLS = 'http://127.0.0.1:9/'; process.env.GSR_FFMPEG = '';
+  const { main } = require('../server/index');
+  const server = await main();
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const r = await fetch(`${base}/api/store/agent-guide`);
+    assert.equal(r.status, 200);
+    const j = await r.json();
+    assert.match(j.steps[1], /402/);
+    assert.equal((await fetch(`${base}/api/store/no-such-record`)).status, 404);
+    const g = await (await fetch(`${base}/api/vesper/greeting`)).json();
+    assert.match(g.reply, /Vesper/);
+    assert.equal(g.audio, null, 'voice off in tests');
+    assert.equal((await fetch(`${base}/vendor/three.module.min.js`)).status, 200);
+    assert.equal((await fetch(`${base}/vendor/../server/index.js`)).status, 404);
+  } finally { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
+});
+
 test('the system prompt names every record and the one being held, and the voice is off cleanly', async () => {
   const sp = v.systemPrompt(cat, cat[1]);
   assert.match(sp, /Alpha Record by Kannaka/);
