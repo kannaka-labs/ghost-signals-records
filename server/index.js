@@ -101,7 +101,7 @@ async function main() {
           releases: releases.map((r) => publicRelease(r)),
         }, undefined, { 'cache-control': 'public, max-age=60' });
       }
-      if ((m = /^\/api\/store\/([a-z0-9-]{1,48})$/.exec(p)) && req.method === 'GET') {
+      if ((m = /^\/api\/store\/([a-z0-9-]{1,48})$/.exec(p)) && req.method === 'GET' && m[1] !== 'agent-guide') {
         const r = await store.release(m[1]);
         if (!r) return send(res, 404, { error: 'no such record' });
         return send(res, 200, { selling: store.enabled(), ...publicRelease(r) }, undefined, { 'cache-control': 'public, max-age=60' });

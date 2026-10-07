@@ -102,7 +102,8 @@ class Vesper {
     const tmp = `${file}.tmp-${process.pid}`;
     try {
       if (this.v.engine === 'edge') {
-        await run('edge-tts', ['--voice', this.v.voice || 'en-GB-SoniaNeural', '--rate', this.v.rate || '-4%', '--text', line, '--write-media', tmp], 45000);
+        // `--rate=-4%` in one token: a separate "-4%" reads as a flag to argparse.
+        await run('edge-tts', ['--voice', this.v.voice || 'en-GB-SoniaNeural', `--rate=${this.v.rate || '-4%'}`, '--text', line, '--write-media', tmp], 45000);
       } else if (this.v.engine === 'piper') {
         const wav = `${tmp}.wav`;
         await run(this.v.piperBin || 'piper', ['--model', this.v.voice, '--output_file', wav], 60000, line);
