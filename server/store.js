@@ -75,12 +75,12 @@ class Store {
     fs.mkdirSync(dir, { recursive: true });
     const coverExt = /\.jpe?g$/i.test(m.cover) ? 'jpg' : 'png';
     const coverFile = `cover.${coverExt}`;
-    fs.copyFileSync(m.cover, path.join(dir, coverFile));
+    place(m.cover, path.join(dir, coverFile));
     const tracks = [];
     for (let i = 0; i < m.tracks.length; i++) {
       const t = m.tracks[i];
       const file = `${String(i + 1).padStart(2, '0')} - ${safeName(t.title)}.mp3`;
-      fs.copyFileSync(t.file, path.join(dir, file));
+      place(t.file, path.join(dir, file));
       const duration = await this._probe(path.join(dir, file));
       const preview = `preview-${String(i + 1).padStart(2, '0')}.mp3`;
       const ok = await this._preview(path.join(dir, file), path.join(dir, preview));
@@ -93,7 +93,7 @@ class Store {
       for (const f of m.art) {
         if (!fs.existsSync(f)) throw Object.assign(new Error(`art file missing: ${f}`), { status: 400 });
         const name = safeName(path.basename(f, path.extname(f))) + path.extname(f).toLowerCase();
-        fs.copyFileSync(f, path.join(dir, 'art', name));
+        place(f, path.join(dir, 'art', name));
         art.push(name);
       }
     }
@@ -334,7 +334,8 @@ class Store {
   _probe(file) {
     if (!this.ffmpeg) return Promise.resolve(null);
     return new Promise((resolve) => {
-      execFile(this.ffmpeg.replace(/ffmpeg(\.exe)?$/, 'ffprobe$1'), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], { timeout: 20000 }, (err, out) => {
+      const [cmd, args] = gently(this.ffmpeg.replace(/ffmpeg(\.exe)?$/, 'ffprobe$1'), ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file]);
+      execFile(cmd, args, { timeout: 20000 }, (err, out) => {
         const n = parseFloat(String(out || '').trim());
         resolve(!err && Number.isFinite(n) ? Math.round(n) : null);
       });
@@ -345,9 +346,24 @@ class Store {
     if (!this.ffmpeg) return Promise.resolve(false);
     const sec = this.s.previewSec || 45;
     return new Promise((resolve) => {
-      execFile(this.ffmpeg, ['-y', '-v', 'error', '-i', src, '-t', String(sec), '-af', `afade=t=out:st=${sec - 3}:d=3`, '-c:a', 'libmp3lame', '-b:a', '96k', out], { timeout: 120000 }, (err) => resolve(!err && fs.existsSync(out)));
+      const [cmd, args] = gently(this.ffmpeg, ['-y', '-v', 'error', '-i', src, '-t', String(sec), '-af', `afade=t=out:st=${sec - 3}:d=3`, '-c:a', 'libmp3lame', '-b:a', '96k', out]);
+      execFile(cmd, args, { timeout: 120000 }, (err) => resolve(!err && fs.existsSync(out)));
     });
   }
+}
+
+/** Put `src` at `dst`: a hard link when both sit on one filesystem (the music
+ *  dir and the store share the big disk, so a release costs no second copy
+ *  of its audio), a copy otherwise. */
+function place(src, dst) {
+  try { fs.unlinkSync(dst); } catch { /* nothing there */ }
+  try { fs.linkSync(src, dst); } catch { fs.copyFileSync(src, dst); }
+}
+
+/** The encoder runs beside a live radio on one CPU: lowest priority, where
+ *  the platform has `nice`. */
+function gently(cmd, args) {
+  return process.platform === 'win32' ? [cmd, args] : ['nice', ['-n', '15', cmd, ...args]];
 }
 
 function safeName(s) { return String(s).replace(/[^A-Za-z0-9 _.,'()&-]+/g, '').replace(/^[. _-]+/, '').trim().replace(/\s+/g, ' ').slice(0, 70) || 'track'; }
