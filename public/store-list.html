@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Record Store, as a list · Ghost Signals Records</title>
+<meta name="description" content="Albums by Kannaka and Flaukowski as downloads. Five dollars each, paid in USDC on Base; you get the mp3s and the cover art.">
+<link rel="stylesheet" href="/site.css">
+<link rel="stylesheet" href="/store.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="/">Ghost&nbsp;Signals <em>Records</em></a>
+  <p class="whereabouts"><a href="/store">Walk the shop</a> · <strong>The list</strong></p>
+</header>
+
+<main class="store">
+  <section class="store-head">
+    <h1>The record store</h1>
+    <p class="lede">Every album the label has made, as a download: the mp3s, the cover art and a note on what is yours to do with them. <span id="price-line">Five dollars a record, paid in USDC on Base.</span></p>
+    <p class="store-note" id="store-note" hidden></p>
+  </section>
+  <section class="rack" id="rack" aria-live="polite"></section>
+  <p class="store-empty" id="empty" hidden>Nothing on the shelves yet.</p>
+</main>
+
+<script src="/store.js"></script>
+</body>
+</html>

@@ -2,30 +2,86 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>The Record Store · Ghost Signals Records</title>
-<meta name="description" content="Albums by Kannaka and Flaukowski as downloads. Five dollars each, paid in USDC on Base; you get the mp3s and the cover art.">
+<meta name="description" content="Walk the shelves of Ghost Signals Records: every album by Kannaka and Flaukowski, free to preview, five dollars in USDC to take home as mp3s and cover art. Vesper is behind the counter.">
 <link rel="stylesheet" href="/site.css">
 <link rel="stylesheet" href="/store.css">
 </head>
-<body>
+<body class="shop-body">
 
-<header class="topbar">
+<canvas id="shop" aria-label="The record store, in three dimensions"></canvas>
+
+<!-- The door. One tap: it unlocks sound and lets Vesper say hello. -->
+<div class="door" id="door">
+  <div class="door-card">
+    <p class="door-kicker">Ghost Signals Records</p>
+    <h1>The record store</h1>
+    <p class="door-lede">Every album Kannaka and Flaukowski have made, face out on the shelves. Pull one down to hear it. Five dollars in USDC takes it home as mp3s and cover art. Vesper is behind the counter if you want to talk.</p>
+    <p class="door-progress" id="door-progress">Stocking the shelves…</p>
+    <button class="btn door-enter" id="enter" type="button" disabled>Come in</button>
+    <p class="door-fine"><a href="/store/list">Prefer a plain list?</a> · <a href="/api/store/agent-guide">For agents</a></p>
+  </div>
+</div>
+
+<header class="shop-top">
   <a class="wordmark" href="/">Ghost&nbsp;Signals <em>Records</em></a>
-  <p class="whereabouts"><a href="/#desk">The desk</a> · <strong>The store</strong></p>
+  <p class="shop-hint" id="hint">Scroll or drag to walk the aisle. Tap a record.</p>
 </header>
 
-<main class="store">
+<!-- The record in your hands. -->
+<aside class="hold" id="hold" hidden aria-live="polite">
+  <button class="hold-close" id="hold-close" type="button" aria-label="Put it back">&times;</button>
+  <p class="hold-by" id="hold-by"></p>
+  <h2 id="hold-title"></h2>
+  <p class="hold-blurb" id="hold-blurb"></p>
+  <ol class="tracklist hold-tracks" id="hold-tracks"></ol>
+  <p class="hold-fine">Previews are the first forty-five seconds of each track.</p>
+  <div class="hold-actions">
+    <a class="btn" id="hold-buy" href="#">Buy this record · $5 USDC</a>
+    <button class="btn ghost" id="hold-ask" type="button">Ask Vesper about it</button>
+  </div>
+</aside>
+
+<!-- Vesper, at the counter. -->
+<section class="clerk" id="clerk" hidden>
+  <div class="clerk-head">
+    <span class="clerk-lamp" aria-hidden="true"></span>
+    <span class="clerk-name" id="clerk-name">Vesper</span>
+    <label class="clerk-voice"><input type="checkbox" id="voice-on" checked> voice</label>
+    <button class="clerk-min" id="clerk-min" type="button" aria-label="Fold the counter away">–</button>
+  </div>
+  <div class="clerk-log" id="clerk-log"></div>
+  <form class="clerk-ask" id="clerk-form">
+    <label class="sr" for="clerk-input">Ask Vesper</label>
+    <input id="clerk-input" type="text" maxlength="300" placeholder="Ask about a record, or how to buy…" autocomplete="off">
+    <button class="btn" type="submit">Ask</button>
+  </form>
+</section>
+
+<!-- What is playing. -->
+<div class="player shop-player" id="player" hidden>
+  <button class="transport" id="transport" type="button" aria-label="Play"><span class="glyph" id="transport-glyph">&#9654;</span></button>
+  <div class="now">
+    <p class="now-track" id="now-track"></p>
+    <p class="now-album" id="now-album"></p>
+  </div>
+  <div class="meter" id="meter" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="meter-fill" id="meter-fill"></div></div>
+  <p class="clock" id="clock">0:00</p>
+  <button class="transport small" id="player-close" type="button" aria-label="Close the player">&times;</button>
+</div>
+<audio id="audio" preload="none"></audio>
+<audio id="voice" preload="none"></audio>
+
+<!-- Without WebGL the shelves become a plain rack on the same page. -->
+<main class="store rack-fallback" id="fallback" hidden>
   <section class="store-head">
     <h1>The record store</h1>
-    <p class="lede">Every album the label has made, as a download: the mp3s, the cover art and a note on what is yours to do with them. <span id="price-line">Five dollars a record, paid in USDC on Base.</span></p>
-    <p class="store-note" id="store-note" hidden></p>
+    <p class="lede">Every album the label has made, as a download: the mp3s, the cover art and a note on what is yours to do with them. Five dollars a record, paid in USDC on Base.</p>
   </section>
-
-  <section class="rack" id="rack" aria-live="polite"></section>
-  <p class="store-empty" id="empty" hidden>Nothing on the shelves yet.</p>
+  <section class="rack" id="rack"></section>
 </main>
 
-<script src="/store.js"></script>
+<script type="module" src="/shop.js"></script>
 </body>
 </html>

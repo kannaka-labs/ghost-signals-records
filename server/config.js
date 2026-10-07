@@ -103,5 +103,13 @@ module.exports = {
   },
 
   npcName: env('GSR_NPC_NAME', 'Vesper'),
+  // Vesper's voice in the store: `edge` (edge-tts, free, needs the network),
+  // `piper` (local), or `off`. The text still answers when the voice is off.
+  vesper: {
+    engine: env('GSR_VESPER_VOICE', 'off'),
+    voice: env('GSR_VESPER_VOICE_NAME', 'en-GB-SoniaNeural'),
+    rate: env('GSR_VESPER_VOICE_RATE', '-4%'),
+    piperBin: env('PIPER_BIN', ''),
+  },
   userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36 GhostSignalsRecords/0.1',
 };

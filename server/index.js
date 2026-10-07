@@ -20,6 +20,7 @@ const { smtpSend } = require('./mail');
 const { Atelier } = require('./art');
 const { Store } = require('./store');
 const { microToUsdc } = require('./store-core');
+const { Vesper, MAX_QUESTION } = require('./vesper');
 
 const log = (m) => console.log(`[records ${new Date().toISOString()}] ${m}`);
 const PUBLIC = path.join(__dirname, '..', 'public');
@@ -65,6 +66,7 @@ async function main() {
   const kax = (cfg.kax.agentToken || cfg.kax.towerCredential) && cfg.kax.storey ? new Kax({ ...cfg.kax, userAgent: cfg.userAgent }) : null;
   const tower = new Tower(cfg, db, orders, desk, kax, log);
   const store = new Store(db, cfg, { log, ffmpeg: process.env.GSR_FFMPEG === '' ? null : (process.env.GSR_FFMPEG || 'ffmpeg') });
+  const vesper = new Vesper(cfg, store, { log });
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
@@ -141,15 +143,59 @@ async function main() {
         res.writeHead(200, { 'content-type': 'application/zip', 'content-length': st.size, 'content-disposition': `attachment; filename="${rel.zipFile}"`, 'cache-control': 'private, no-store' });
         return fs.createReadStream(file).pipe(res);
       }
-      // Public files of a release: the cover and the previews.
-      if ((m = /^\/store\/([a-z0-9-]{1,48})\/(cover\.(?:png|jpg)|preview-\d{2}\.mp3)$/.exec(p))) {
+      // Public files of a release: the cover, a 512 px thumbnail of it (made
+      // on first request; the shop's shelves load 39 of these, not 39 full
+      // covers), and the previews.
+      if ((m = /^\/store\/([a-z0-9-]{1,48})\/(cover\.(?:png|jpg)|cover-512\.jpg|preview-\d{2}\.mp3)$/.exec(p))) {
         const r = await store.release(m[1]);
         if (!r) return send(res, 404, 'not found', 'text/plain');
-        const file = path.join(store.dir(r.sku), m[2]);
+        let file = path.join(store.dir(r.sku), m[2]);
+        if (m[2] === 'cover-512.jpg' && !fs.existsSync(file)) file = (await store.thumbnail(r)) || file;
         if (!fs.existsSync(file)) return send(res, 404, 'not found', 'text/plain');
         return send(res, 200, fs.readFileSync(file), m[2].endsWith('.mp3') ? 'audio/mpeg' : m[2].endsWith('.jpg') ? 'image/jpeg' : 'image/png', { 'cache-control': 'public, max-age=86400' });
       }
+
+      // ---- Vesper, the clerk ------------------------------------------------
+      if (p === '/api/vesper/greeting') {
+        const text = vesper.greeting();
+        return send(res, 200, { name: vesper.name, reply: text, audio: await vesper.speak(text), voice: vesper.voiceEnabled() });
+      }
+      if (p === '/api/vesper/say' && req.method === 'POST') {
+        if (!allow(ip, 12)) return send(res, 429, { error: 'slow down' });
+        const body = await readJson(req, 4 * 1024);
+        const text = typeof body.text === 'string' ? body.text.slice(0, MAX_QUESTION) : '';
+        const about = typeof body.about === 'string' && /^[a-z0-9-]{1,48}$/.test(body.about) ? body.about : undefined;
+        const a = await vesper.answer(text, { about });
+        const audio = body.voice === false ? null : await vesper.speak(a.reply);
+        return send(res, 200, { name: vesper.name, reply: a.reply, source: a.source, audio });
+      }
+      if ((m = /^\/vesper\/voice\/([a-f0-9]{24}\.mp3)$/.exec(p))) {
+        const f = vesper.voiceFile(m[1]);
+        if (!f) return send(res, 404, 'not found', 'text/plain');
+        return send(res, 200, fs.readFileSync(f), 'audio/mpeg', { 'cache-control': 'public, max-age=604800' });
+      }
+      // How an agent buys: the same terms a browser gets, written down once.
+      if (p === '/api/store/agent-guide') {
+        return send(res, 200, {
+          store: 'Ghost Signals Records',
+          catalog: `${cfg.publicUrl}/api/store`,
+          steps: [
+            `GET ${cfg.publicUrl}/api/store and pick a sku.`,
+            `POST ${cfg.publicUrl}/api/store/<sku>/buy with JSON {"from": "<your wallet address>", "email": "<optional>"}; the 402 reply carries payment.payTo, payment.amountMicro, payment.asset (USDC on Base, chain 8453) and payment.calldata for the transfer.`,
+            'Send exactly that amount of USDC to payTo from the wallet you named.',
+            `POST ${cfg.publicUrl}/api/purchase/<publicId>/tx with {"hash": "<tx hash>"} (or wait: the store watches the chain and settles on its own).`,
+            `GET ${cfg.publicUrl}/api/purchase/<publicId>: when state is "paid", purchase.download is your zip (mp3s, cover art, README).`,
+          ],
+          rules: ['One transfer pays for one purchase. A transfer mined before the purchase was opened does not count.', 'Downloads are for personal listening; see README.txt in the zip.'],
+        }, undefined, { 'cache-control': 'public, max-age=3600' });
+      }
+      if ((m = /^\/vendor\/([a-z0-9][a-z0-9.-]{0,60}\.js)$/.exec(p))) {
+        const f = path.join(PUBLIC, 'vendor', m[1]);
+        if (!fs.existsSync(f)) return html(res, 404, 'notfound.html');
+        return send(res, 200, fs.readFileSync(f), 'application/javascript; charset=utf-8', { 'cache-control': 'public, max-age=604800' });
+      }
       if (p === '/store' || p === '/store/') return html(res, 200, 'store.html');
+      if (p === '/store/list') return html(res, 200, 'store-list.html');
       if ((m = /^\/store\/([a-z0-9-]{1,48})$/.exec(p))) {
         const r = await store.release(m[1]);
         if (!r) return html(res, 404, 'notfound.html');
