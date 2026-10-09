@@ -77,6 +77,13 @@
 .hold-actions { display: flex; flex-wrap: wrap; gap: .6rem; }
 .hold-actions .btn { flex: 1 1 11rem; min-width: 0; text-align: center; }
 
+/* the ATM by the door (the card the kiosk opens), and its tile in the plain rack */
+.atm-legs { margin: 0 0 .6rem; padding-left: 1.1rem; color: #c9bda9; font-size: .95rem; }
+.atm-legs li { margin: 0 0 .45rem; }
+.atm-legs strong { color: var(--bone); }
+.atm-tile-face { aspect-ratio: 1 / 1; display: grid; place-items: center; background: #0b1a1e; color: var(--amber); font-family: var(--gear); font-size: 1.7rem; letter-spacing: .1em; border: 1px solid rgba(224,135,47,.35); border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.45); transition: transform .25s ease; }
+.atm-tile:hover .atm-tile-face, .atm-tile:focus-visible .atm-tile-face { transform: translateY(-4px); }
+
 /* Vesper at the counter */
 .clerk { position: fixed; left: 1.2rem; bottom: 5.8rem; width: min(20rem, calc(100vw - 2.4rem)); z-index: 6;
   background: rgba(31,24,21,.9); border: 1px solid var(--sleeve-edge); border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,.55); overflow: hidden; }

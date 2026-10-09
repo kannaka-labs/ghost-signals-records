@@ -134,6 +134,13 @@ import * as THREE from '/vendor/three.module.min.js';
       const n = document.createElement('p'); n.className = 'record-n'; n.textContent = `${r.tracks.length} ${r.tracks.length === 1 ? 'track' : 'tracks'} · $${r.price}`;
       words.appendChild(h); words.appendChild(by); words.appendChild(n); a.appendChild(img); a.appendChild(words); rack.appendChild(a);
     });
+    // The ATM stands in the plain rack too, as a tile at the end of the row.
+    const atm = document.createElement('a'); atm.className = 'record atm-tile'; atm.href = '/atm';
+    const face = document.createElement('div'); face.className = 'atm-tile-face'; face.setAttribute('aria-hidden', 'true'); face.textContent = 'USDC ATM';
+    const aw = document.createElement('div'); aw.className = 'record-words';
+    const ah = document.createElement('h2'); ah.textContent = 'The USDC ATM';
+    const ap = document.createElement('p'); ap.className = 'record-by'; ap.textContent = 'Card in, USDC out; or swap ETH for USDC. No ETH is needed to buy a record.';
+    aw.appendChild(ah); aw.appendChild(ap); atm.appendChild(face); atm.appendChild(aw); rack.appendChild(atm);
     $('fallback').hidden = false;
     document.body.classList.add('flat');
     $('door').hidden = true;
@@ -292,9 +299,61 @@ import * as THREE from '/vendor/three.module.min.js';
     disc.position.set(-0.8, 1.11, counterZ + 0.05); scene.add(disc);
     scene.userData.disc = disc;
 
+    buildAtm(W);
+
     resize();
     window.addEventListener('resize', resize);
   }
+
+  // ---------------------------------------------------------------- the USDC ATM
+  // The same machine as /atm, standing where a visitor sees it on the way in:
+  // a steel cabinet against the right wall just inside the door, a lit screen,
+  // a keypad, a slot, and an amber bar over it. Tap it for the two ways to get
+  // USDC. Nothing here moves money; the card it opens links to the real desk.
+  const atmMeshes = [];
+  function screenTexture() {
+    const c = document.createElement('canvas'); c.width = 512; c.height = 384;
+    const g = c.getContext('2d');
+    g.fillStyle = '#0b1a1e'; g.fillRect(0, 0, 512, 384);
+    g.strokeStyle = 'rgba(224,135,47,.35)'; g.lineWidth = 6; g.strokeRect(14, 14, 484, 356);
+    g.fillStyle = '#e0872f'; g.textAlign = 'center';
+    g.font = 'bold 92px "Helvetica Neue", Helvetica, Arial, sans-serif';
+    g.fillText('USDC', 256, 150); g.fillText('ATM', 256, 250);
+    g.fillStyle = '#ece3d4'; g.font = '34px "Helvetica Neue", Helvetica, Arial, sans-serif';
+    g.fillText('card  ·  swap', 256, 332);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+  }
+  function buildAtm(W) {
+    const z = zMax - 1.9;             // just inside the door, before the first rack at zMax - 3.6
+    const x = W / 2 - 0.34;           // against the right wall
+    const steel = new THREE.MeshStandardMaterial({ color: 0x4b5157, roughness: 0.45, metalness: 0.7 });
+    const trim = new THREE.MeshStandardMaterial({ color: 0x23272b, roughness: 0.5, metalness: 0.6 });
+    const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = -Math.PI / 2; // its front faces the aisle
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.72, 1.62, 0.5), steel); body.position.set(0, 0.81, 0); g.add(body);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.3, 0.52), trim); head.position.set(0, 1.77, 0); g.add(head);
+    const bezel = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.43, 0.02), trim); bezel.position.set(0, 1.3, 0.245); g.add(bezel);
+    // The screen is unlit on purpose: it reads the same under every lamp.
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.375), new THREE.MeshBasicMaterial({ map: screenTexture() })); screen.position.set(0, 1.3, 0.258); g.add(screen);
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.06, 0.2), trim); pad.position.set(0, 0.95, 0.34); g.add(pad);
+    const keyMat = new THREE.MeshStandardMaterial({ color: 0xece3d4, emissive: 0x6b5a40, emissiveIntensity: 0.6, roughness: 0.6 });
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) { const k = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.015, 0.045), keyMat); k.position.set(-0.1 + c * 0.1, 0.987, 0.285 + r * 0.055); g.add(k); }
+    const slot = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.025, 0.03), new THREE.MeshStandardMaterial({ color: 0xe0872f, emissive: 0xe0872f, emissiveIntensity: 1.2 })); slot.position.set(0, 0.62, 0.252); g.add(slot);
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.14, 0.04), new THREE.MeshStandardMaterial({ color: 0xe0872f, emissive: 0xe0872f, emissiveIntensity: 0.9 })); bar.position.set(0, 2.02, 0.24); g.add(bar);
+    const glow = new THREE.PointLight(0x58b8c8, 3.5, 2.6, 2); glow.position.set(0, 1.35, 0.6); g.add(glow);
+    scene.add(g);
+    g.traverse((o) => { if (o.isMesh) { o.userData.atm = true; atmMeshes.push(o); } });
+    scene.userData.atm = { x, z };
+  }
+  const atmCard = $('atm-card');
+  function openAtm() {
+    if (held) putBack();
+    atmCard.hidden = false;
+    hint('The USDC ATM. Card in, USDC out; or swap ETH for USDC. One percent on swaps, nothing on the card leg.');
+    const a = scene && scene.userData.atm;
+    if (a) { targetZ = Math.max(zMin, Math.min(zMax, a.z + 1.5)); targetYaw = -0.8; }
+  }
+  function closeAtm() { if (atmCard) atmCard.hidden = true; }
+  if ($('atm-close')) $('atm-close').addEventListener('click', closeAtm);
 
   function resize() {
     if (!renderer) return;
@@ -372,8 +431,10 @@ import * as THREE from '/vendor/three.module.min.js';
     pointer.x = (ev.clientX / window.innerWidth) * 2 - 1;
     pointer.y = -(ev.clientY / window.innerHeight) * 2 + 1;
     raycaster.setFromCamera(pointer, camera);
+    if (atmMeshes.length && raycaster.intersectObjects(atmMeshes, false).length) { openAtm(); return; }
     const hits = raycaster.intersectObjects(records.map((r) => r.mesh), false);
     if (hits.length) {
+      closeAtm();
       const rec = records.find((r) => r.mesh === hits[0].object);
       if (rec === held) {
         // A second tap on the record you hold plays it.
@@ -387,6 +448,7 @@ import * as THREE from '/vendor/three.module.min.js';
     if (now - lastTap < 350) { targetZ = Math.max(zMin, targetZ - 2.2); } // a double tap steps forward
     lastTap = now;
     if (held) putBack();
+    closeAtm();
   }
   canvas.addEventListener('pointerdown', onDown);
   window.addEventListener('pointermove', onMove);
@@ -399,7 +461,7 @@ import * as THREE from '/vendor/three.module.min.js';
     if (ev.key === 'ArrowDown' || ev.key === 's') targetZ = Math.min(zMax, targetZ + 0.8);
     if (ev.key === 'ArrowLeft' || ev.key === 'a') targetYaw = Math.min(1.25, targetYaw + 0.25);
     if (ev.key === 'ArrowRight' || ev.key === 'd') targetYaw = Math.max(-1.25, targetYaw - 0.25);
-    if (ev.key === 'Escape') putBack();
+    if (ev.key === 'Escape') { putBack(); closeAtm(); }
   });
 
   let hintTimer = null;
@@ -439,7 +501,7 @@ import * as THREE from '/vendor/three.module.min.js';
     setTimeout(() => { $('door').hidden = true; }, 700);
     clerk.hidden = false;
     unlockAudio();
-    hint('Scroll or drag to walk the aisle. Tap a record to take it down.');
+    hint('Scroll or drag to walk the aisle. Tap a record to take it down. The USDC ATM is by the door, on your right.');
     try {
       const d = await (await fetch('/api/vesper/greeting')).json();
       say('her', d.reply);
@@ -476,6 +538,8 @@ import * as THREE from '/vendor/three.module.min.js';
       $('door').hidden = true; clerk.hidden = false;
       const rec = q.get('pick') && records.find((r) => r.release.sku === q.get('pick'));
       if (q.has('at')) { const t = Math.max(0, Math.min(1, parseFloat(q.get('at')) || 0)); camZ = targetZ = zMax - (zMax - zMin) * t; }
+      if (q.has('yaw')) { targetYaw = yaw = Math.max(-1.25, Math.min(1.25, parseFloat(q.get('yaw')) || 0)); } // radians, negative turns right
+      if (q.has('atm')) openAtm();
       if (rec) { pickUp(rec); camZ = targetZ = Math.max(zMin, Math.min(zMax, rec.home.pos.z + 1.6)); targetYaw = yaw = rec.home.pos.x < 0 ? 0.55 : -0.55; }
       say('her', vesperGreetingFallback());
     }
