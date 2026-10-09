@@ -69,6 +69,71 @@ function matchTransfer(purchase, t, { payTo, token = USDC_BASE, headBlock, confi
 /** One Transfer can pay for one thing, ever. */
 function ledgerKey(t) { return `usdc:${t.txHash}:${t.logIndex}`; }
 
+// ---- gasless checkout: EIP-3009 transferWithAuthorization on USDC ---------
+// USDC's EIP-712 domain on Base (FiatTokenV2_2): name "USD Coin", version "2".
+const USDC_DOMAIN = { name: 'USD Coin', version: '2', chainId: CHAIN_ID, verifyingContract: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' };
+const AUTH_TYPES = {
+  TransferWithAuthorization: [
+    { name: 'from', type: 'address' },
+    { name: 'to', type: 'address' },
+    { name: 'value', type: 'uint256' },
+    { name: 'validAfter', type: 'uint256' },
+    { name: 'validBefore', type: 'uint256' },
+    { name: 'nonce', type: 'bytes32' },
+  ],
+};
+function isBytes32(h) { return /^0x[0-9a-fA-F]{64}$/.test(String(h || '')); }
+
+/** The message a buyer signs: a transfer of exactly the purchase amount to the
+ *  store, under the nonce and deadline the store issued for this purchase. */
+function authMessage(purchase, payTo, from) {
+  return {
+    from: toChecksum(from),
+    to: toChecksum(payTo),
+    value: String(purchase.amountMicro),
+    validAfter: '0',
+    validBefore: String(purchase.authValidBefore),
+    nonce: purchase.authNonce,
+  };
+}
+
+/** What the wallet is asked to sign (eth_signTypedData_v4 takes this JSON). */
+function authTypedData(purchase, payTo, from) {
+  return {
+    types: { EIP712Domain: [{ name: 'name', type: 'string' }, { name: 'version', type: 'string' }, { name: 'chainId', type: 'uint256' }, { name: 'verifyingContract', type: 'address' }], ...AUTH_TYPES },
+    primaryType: 'TransferWithAuthorization',
+    domain: USDC_DOMAIN,
+    message: authMessage(purchase, payTo, from),
+  };
+}
+
+/**
+ * Is this a signature over exactly the authorization we issued? Every rule is
+ * a reason. Returns { ok, message, sig: {v, r, s} } or { ok: false, reason }.
+ * The signature is recovered here so a wrong signer never reaches the chain
+ * (USDC would also reject it, but at the relayer's gas expense).
+ */
+function checkAuthorization(purchase, payTo, auth, nowSec = Math.floor(Date.now() / 1000)) {
+  if (!purchase || purchase.state !== 'awaiting') return { ok: false, reason: 'not_awaiting' };
+  if (!purchase.authNonce || !purchase.authValidBefore) return { ok: false, reason: 'no_authorization_issued' };
+  if (!auth || !isAddress(auth.from)) return { ok: false, reason: 'bad_from' };
+  if (purchase.fromAddr && normAddr(auth.from) !== normAddr(purchase.fromAddr)) return { ok: false, reason: 'wrong_sender' };
+  if (Number(purchase.authValidBefore) <= nowSec + 60) return { ok: false, reason: 'expired' };
+  let sig;
+  try {
+    const { ethers } = require('ethers');
+    sig = ethers.Signature.from(auth.signature ? auth.signature : { v: auth.v, r: auth.r, s: auth.s });
+    const message = authMessage(purchase, payTo, auth.from);
+    const signer = ethers.verifyTypedData(USDC_DOMAIN, AUTH_TYPES, message, sig);
+    if (normAddr(signer) !== normAddr(auth.from)) return { ok: false, reason: 'bad_signature' };
+    return { ok: true, message, sig: { v: sig.v, r: sig.r, s: sig.s } };
+  } catch (e) {
+    return { ok: false, reason: 'bad_signature' };
+  }
+}
+
+function toChecksum(a) { const { ethers } = require('ethers'); return ethers.getAddress(normAddr(a)); }
+
 // ---- download tokens: HMAC over (purchase, expiry), base64url, no state --
 function signDownload(secret, publicId, expSec) {
   const mac = crypto.createHmac('sha256', secret).update(`${publicId}.${expSec}`).digest('base64url').slice(0, 32);
@@ -114,7 +179,8 @@ function readmeText({ title, artist, year, tracks, publicUrl, credits }) {
 }
 
 module.exports = {
-  USDC_BASE, CHAIN_ID, TRANSFER_TOPIC,
-  isAddress, normAddr, isTxHash, addrTopic, topicAddr, microToUsdc, transferCalldata,
+  USDC_BASE, CHAIN_ID, TRANSFER_TOPIC, USDC_DOMAIN, AUTH_TYPES,
+  isAddress, normAddr, isTxHash, isBytes32, addrTopic, topicAddr, microToUsdc, transferCalldata,
   parseTransferLog, matchTransfer, ledgerKey, signDownload, verifyDownload, slug, readmeText,
+  authMessage, authTypedData, checkAuthorization, toChecksum,
 };

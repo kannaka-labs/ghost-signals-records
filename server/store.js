@@ -41,13 +41,14 @@ function makeRpc(urls, userAgent) {
 }
 
 class Store {
-  constructor(db, cfg, { rpc, log, ffmpeg } = {}) {
+  constructor(db, cfg, { rpc, log, ffmpeg, relayer } = {}) {
     this.db = db;
     this.cfg = cfg;
     this.s = cfg.store || {};
     this.log = log || (() => {});
     this.rpc = rpc || makeRpc(this.s.rpcUrls || [], cfg.userAgent);
     this.ffmpeg = ffmpeg === undefined ? 'ffmpeg' : ffmpeg; // null = no previews
+    this.relayer = relayer || null; // gasless checkout; null = buyers pay their own gas
     this._timer = null;
   }
 
@@ -160,6 +161,61 @@ class Store {
       claimUrl: `${this.cfg.publicUrl}/api/purchase/${purchase.publicId}/tx`,
       statusUrl: `${this.cfg.publicUrl}/api/purchase/${purchase.publicId}`,
     };
+  }
+
+  /**
+   * The gasless half of the terms: the EIP-3009 authorization this purchase
+   * accepts, issued once (nonce + deadline stored on the purchase) and the
+   * typed data a wallet signs. `from` is filled in by the page; an agent
+   * substitutes its own address into message.from before signing. Absent or
+   * disabled when there is no relayer or its float is dry: the buyer then pays
+   * their own gas, as before.
+   */
+  async gaslessTerms(purchase) {
+    if (!this.relayer || !this.relayer.enabled() || purchase.state !== 'awaiting') return { enabled: false, reason: this.relayer ? 'disabled' : 'no_relayer' };
+    const st = await this.relayer.status();
+    if (!st.enabled) return { enabled: false, reason: st.reason || 'disabled' };
+    if (!purchase.authNonce) {
+      const nonce = `0x${crypto.randomBytes(32).toString('hex')}`;
+      const validBefore = Math.floor(Date.now() / 1000) + (this.s.authMinutes || 30) * 60;
+      await this.db.run('UPDATE purchases SET auth_nonce=?, auth_valid_before=?, updated_at=? WHERE id=? AND auth_nonce IS NULL', [nonce, validBefore, now(), purchase.id]);
+      purchase = await this.purchaseById(purchase.id);
+    }
+    if (Number(purchase.authValidBefore) <= Math.floor(Date.now() / 1000) + 60) {
+      // The deadline passed before anyone signed: issue a fresh one.
+      const nonce = `0x${crypto.randomBytes(32).toString('hex')}`;
+      const validBefore = Math.floor(Date.now() / 1000) + (this.s.authMinutes || 30) * 60;
+      await this.db.run('UPDATE purchases SET auth_nonce=?, auth_valid_before=?, updated_at=? WHERE id=? AND relay_tx IS NULL', [nonce, validBefore, now(), purchase.id]);
+      purchase = await this.purchaseById(purchase.id);
+    }
+    const from = purchase.fromAddr || '0x0000000000000000000000000000000000000000';
+    return {
+      enabled: true,
+      scheme: 'eip3009-transferWithAuthorization',
+      relayer: this.relayer.address(),
+      typedData: core.authTypedData(purchase, this.s.payTo, from),
+      submitUrl: `${this.cfg.publicUrl}/api/purchase/${purchase.publicId}/authorize`,
+      note: 'Sign this with eth_signTypedData_v4 (put your own address in message.from) and POST {from, signature} to submitUrl. The store pays the network fee; you need only the USDC.',
+    };
+  }
+
+  /** Submit a signed authorization through the relayer, once per purchase. */
+  async relay(purchase, auth) {
+    if (!this.relayer) return { ok: false, reason: 'no_relayer' };
+    if (purchase.state !== 'awaiting') return { ok: true, already: true, state: purchase.state, txHash: purchase.txHash || purchase.relayTx };
+    if (purchase.relayTx) return { ok: true, already: true, txHash: purchase.relayTx, state: purchase.state };
+    // Claim the relay slot first so two clicks cannot pay twice for one record.
+    const claimed = (await this.db.run('UPDATE purchases SET relay_tx=?, relay_at=?, from_addr=COALESCE(from_addr, ?), updated_at=? WHERE id=? AND relay_tx IS NULL AND state=?', ['pending', now(), core.normAddr(auth && auth.from) || null, now(), purchase.id, 'awaiting'])).changes === 1;
+    if (!claimed) { const p = await this.purchaseById(purchase.id); return { ok: true, already: true, txHash: p.relayTx, state: p.state }; }
+    const r = await this.relayer.relay(await this.purchaseById(purchase.id), this.s.payTo, auth);
+    if (r.ok) {
+      await this.db.run('UPDATE purchases SET relay_tx=?, updated_at=? WHERE id=?', [r.txHash, now(), purchase.id]);
+      return { ok: true, txHash: r.txHash, state: 'awaiting' };
+    }
+    // Nothing went to the chain: free the slot so the buyer can try again
+    // (or pay the other way).
+    await this.db.run('UPDATE purchases SET relay_tx=NULL, relay_at=NULL, updated_at=? WHERE id=? AND relay_tx=?', [now(), purchase.id, 'pending']);
+    return r;
   }
 
   // ---- purchases ----------------------------------------------------------
@@ -396,6 +452,8 @@ function hydratePurchase(row) {
     id: row.id, publicId: row.public_id, sku: row.sku, state: row.state, amountMicro: row.amount_micro, payTo: row.pay_to,
     fromAddr: row.from_addr, fromBlock: row.from_block, email: row.email, txHash: row.tx_hash, logIndex: row.log_index,
     paidAt: row.paid_at, compedAt: row.comped_at, createdAt: row.created_at, updatedAt: row.updated_at,
+    authNonce: row.auth_nonce || null, authValidBefore: row.auth_valid_before || null,
+    relayTx: row.relay_tx && row.relay_tx !== 'pending' ? row.relay_tx : null, relayAt: row.relay_at || null,
   };
 }
 
