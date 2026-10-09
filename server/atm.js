@@ -41,7 +41,11 @@ function cdpJwt({ keyId, secret, method, host, path, nowSec = Math.floor(Date.no
   if (!k || !keyId) throw new Error('CDP API key not configured');
   const header = { alg: k.alg, kid: keyId, typ: 'JWT', nonce: crypto.randomBytes(16).toString('hex') };
   const uri = `${method} ${host}${path}`;
-  const claims = { sub: keyId, iss: 'cdp', nbf: nowSec, exp: nowSec + 120, uri, uris: [uri] };
+  // The claim set Coinbase's own SDK sends (@coinbase/cdp-sdk generateJwt):
+  // sub = key id, iss "cdp", aud ["cdp_service"], a two-minute window, and
+  // the request bound in `uris`. `uri` (singular) is what the older SDK
+  // sent; both are carried so either server-side check passes.
+  const claims = { sub: keyId, iss: 'cdp', aud: ['cdp_service'], nbf: nowSec, exp: nowSec + 120, uri, uris: [uri] };
   const signingInput = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(claims))}`;
   const sig = k.alg === 'ES256'
     ? crypto.sign('sha256', Buffer.from(signingInput), { key: k.key, dsaEncoding: 'ieee-p1363' })
