@@ -41,6 +41,7 @@ test('cdpJwt: ES256 over a PEM key, bound to one request, two minutes, verifiabl
   assert.match(d.header.nonce, /^[0-9a-f]{32}$/);
   assert.equal(d.claims.sub, 'organizations/o/apiKeys/k');
   assert.equal(d.claims.iss, 'cdp');
+  assert.deepEqual(d.claims.aud, ['cdp_service'], 'the audience the CDP SDK sends; without it the token endpoint answers 401');
   assert.equal(d.claims.exp - d.claims.nbf, 120);
   assert.equal(d.claims.uri, 'POST api.developer.coinbase.com/onramp/v1/token');
   assert.deepEqual(d.claims.uris, [d.claims.uri]);
