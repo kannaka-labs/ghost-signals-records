@@ -100,6 +100,20 @@
 
 .shop-player { z-index: 7; }
 
+/* ---- the USDC ATM ---- */
+.atm .atm-panel { padding: clamp(1.4rem, 4vw, 2.4rem) var(--gutter); border-top: var(--rule); }
+.atm-steps { list-style: decimal; padding-left: 1.4rem; margin: 0; display: grid; gap: 1.2rem; max-width: 46rem; }
+.atm-steps li > label, .atm-label { display: block; font-family: var(--gear); font-size: .8125rem; color: var(--dust); margin-bottom: .4rem; }
+.atm-row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+.atm-row input, .atm-row select { flex: 1 1 16rem; min-width: 0; padding: .6rem .7rem; font: inherit; background: transparent; color: inherit; border: 1px solid #4a3a2f; border-radius: 6px; }
+.atm-amounts { display: flex; gap: .5rem; flex-wrap: wrap; }
+.atm-amounts .amount.on { border-color: var(--bone); color: var(--bone); }
+.atm-list { max-width: 46rem; padding-left: 1.2rem; display: grid; gap: .6rem; }
+.swap-row input { flex: 1 1 10rem; }
+.swap-quote { margin-top: 1rem; display: grid; gap: .5rem; max-width: 46rem; }
+.swap-line { margin: 0; }
+.sr { position: absolute; left: -9999px; }
+
 @media (max-width: 700px) {
   .shop-top { padding: .8rem 1rem; }
   .shop-hint { display: none; }

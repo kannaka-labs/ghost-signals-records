@@ -20,6 +20,7 @@ const { smtpSend } = require('./mail');
 const { Atelier } = require('./art');
 const { Store } = require('./store');
 const { Relayer } = require('./gasless');
+const { Atm } = require('./atm');
 const { microToUsdc } = require('./store-core');
 const { Vesper, MAX_QUESTION } = require('./vesper');
 
@@ -69,6 +70,7 @@ async function main(opts = {}) {
   const relayer = new Relayer(cfg.store, { log, chain: opts.relayChain });
   const store = new Store(db, cfg, { log, ffmpeg: process.env.GSR_FFMPEG === '' ? null : (process.env.GSR_FFMPEG || 'ffmpeg'), relayer: relayer.enabled() ? relayer : null });
   const vesper = new Vesper(cfg, store, { log });
+  const atm = new Atm(cfg.atm, { log, fetch: opts.atmFetch });
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
@@ -212,6 +214,23 @@ async function main(opts = {}) {
       }
       if (p === '/store' || p === '/store/') return html(res, 200, 'store.html');
       if (p === '/store/list') return html(res, 200, 'store-list.html');
+      // ---- the USDC ATM ------------------------------------------------------
+      if (p === '/atm' || p === '/atm/') return html(res, 200, 'atm.html');
+      if (p === '/api/atm') return send(res, 200, atm.config(), undefined, { 'cache-control': 'public, max-age=60' });
+      if (p === '/api/atm/session' && req.method === 'POST') {
+        if (!allow(ip, 6)) return send(res, 429, { error: 'slow down' });
+        const body = await readJson(req, 2 * 1024);
+        const r = await atm.session({ address: typeof body.address === 'string' ? body.address : '', amount: body.amount, currency: typeof body.currency === 'string' ? body.currency : undefined, ip });
+        return send(res, r.ok ? 200 : 503, r);
+      }
+      // The swap desk: an indicative price (GET) or a firm, sendable quote
+      // (POST, with the taker's address). The 0x key never leaves this process.
+      if (p === '/api/atm/swap' && (req.method === 'GET' || req.method === 'POST')) {
+        if (!allow(ip, 20)) return send(res, 429, { error: 'slow down' });
+        const body = req.method === 'POST' ? await readJson(req, 2 * 1024) : Object.fromEntries(url.searchParams);
+        const r = await atm.swapQuote({ sellToken: body.sellToken, sellAmount: body.sellAmount, taker: typeof body.taker === 'string' ? body.taker : undefined, firm: req.method === 'POST' });
+        return send(res, r.ok ? 200 : (r.reason === 'swap_not_configured' ? 503 : 400), r);
+      }
       if ((m = /^\/store\/([a-z0-9-]{1,48})$/.exec(p))) {
         const r = await store.release(m[1]);
         if (!r) return html(res, 404, 'notfound.html');

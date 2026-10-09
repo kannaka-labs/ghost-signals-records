@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>USDC ATM · KAX City</title>
+<meta name="description" content="Turn a card or a bank account into USDC on Base, in your own wallet, through Coinbase Onramp. The ATM in KAX City, run by Ghost Signals Records.">
+<link rel="stylesheet" href="/site.css">
+<link rel="stylesheet" href="/store.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="wordmark" href="/">Ghost&nbsp;Signals <em>Records</em></a>
+  <nav class="topnav" aria-label="Site"><a class="btn ghost small" href="/store">The record store</a></nav>
+  <p class="whereabouts">The ATM, KAX City</p>
+</header>
+
+<main class="store atm">
+  <section class="store-head">
+    <h1>USDC ATM</h1>
+    <p class="lede">Put USDC on Base into your own wallet with a card or a bank account. Then anything in KAX City that takes USDC, the record store included, is one signature away.</p>
+    <p class="store-note" id="atm-note" hidden></p>
+  </section>
+
+  <section class="atm-panel" id="onramp">
+    <h2 class="section-h">Buy USDC</h2>
+    <ol class="atm-steps">
+      <li>
+        <label for="addr">Your wallet address on Base</label>
+        <div class="atm-row">
+          <input id="addr" type="text" maxlength="42" placeholder="0x…" spellcheck="false" autocomplete="off">
+          <button class="btn ghost small" id="connect" type="button">Use my wallet</button>
+        </div>
+        <p class="buy-fine">The USDC lands here. Nobody else holds it, not us, not Coinbase, once the purchase settles.</p>
+      </li>
+      <li>
+        <span class="atm-label">How much</span>
+        <div class="atm-amounts" id="amounts" role="radiogroup" aria-label="Amount in dollars"></div>
+      </li>
+      <li>
+        <button class="btn" id="go" type="button">Open Coinbase to buy USDC</button>
+        <p class="buy-said" id="said"></p>
+        <p class="buy-fine" id="fee-line"></p>
+      </li>
+    </ol>
+  </section>
+
+  <section class="atm-panel" id="swap">
+    <h2 class="section-h">Swap to USDC</h2>
+    <p class="lede" id="swap-note">Already hold ETH or another token on Base? The swap desk turns it into USDC in one transaction, from your own wallet.</p>
+    <div class="atm-row swap-row">
+      <label class="sr" for="sell-token">Token to sell</label>
+      <select id="sell-token"></select>
+      <label class="sr" for="sell-amount">Amount</label>
+      <input id="sell-amount" type="text" inputmode="decimal" placeholder="0.01" maxlength="24" spellcheck="false">
+      <button class="btn ghost small" id="quote" type="button">Quote</button>
+    </div>
+    <div class="swap-quote" id="swap-quote" hidden>
+      <p class="swap-line">You get about <strong id="q-buy"></strong> USDC <span class="buy-fine">(at least <span id="q-min"></span> after slippage)</span></p>
+      <p class="swap-line buy-fine">ATM fee <strong id="q-fee"></strong> USDC (<span id="q-bps"></span>), already inside that number. Network fee is paid by your wallet in ETH.</p>
+      <button class="btn" id="swap-go" type="button">Swap in my wallet</button>
+    </div>
+    <p class="buy-said" id="swap-said"></p>
+    <p class="buy-fine" id="swap-fee"></p>
+  </section>
+
+  <section class="atm-panel atm-how">
+    <h2 class="section-h">How this works, plainly</h2>
+    <ul class="atm-list">
+      <li>The buying is done by Coinbase, a licensed on-ramp. They check your identity, take your payment, and send the USDC straight to the address you typed. We mint a five-minute, single-use session for your address and nothing more.</li>
+      <li>Coinbase charges its own fee on the purchase (a spread plus a card or ACH fee). The ATM adds nothing on that leg.</li>
+      <li>The ATM's surcharge, like a real one, is on the swap desk: a small cut of each swap, shown before you confirm.</li>
+      <li>We never hold your money or your coins, and we cannot reverse a purchase. If something looks wrong, stop before you pay.</li>
+    </ul>
+  </section>
+
+  <p class="hero-fine"><a href="/store">Back to the record store</a></p>
+</main>
+
+<script src="/atm.js"></script>
+</body>
+</html>
