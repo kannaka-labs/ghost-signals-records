@@ -188,14 +188,20 @@ class Store {
       await this.db.run('UPDATE purchases SET auth_nonce=?, auth_valid_before=?, updated_at=? WHERE id=? AND relay_tx IS NULL', [nonce, validBefore, now(), purchase.id]);
       purchase = await this.purchaseById(purchase.id);
     }
-    const from = purchase.fromAddr || '0x0000000000000000000000000000000000000000';
+    // A purchase opened without a wallet gets the zero address as a stand-in
+    // in message.from; the signer replaces it with their own and becomes the
+    // purchase's payer when the authorization is accepted (relay() binds it).
+    const from = purchase.fromAddr || core.ZERO_ADDRESS;
     return {
       enabled: true,
       scheme: 'eip3009-transferWithAuthorization',
       relayer: this.relayer.address(),
+      payer: purchase.fromAddr || null,
       typedData: core.authTypedData(purchase, this.s.payTo, from),
       submitUrl: `${this.cfg.publicUrl}/api/purchase/${purchase.publicId}/authorize`,
-      note: 'Sign this with eth_signTypedData_v4 (put your own address in message.from) and POST {from, signature} to submitUrl. The store pays the network fee; you need only the USDC.',
+      note: purchase.fromAddr
+        ? 'Sign this with eth_signTypedData_v4 from the wallet named in message.from and POST {from, signature} to submitUrl. The store pays the network fee; you need only the USDC.'
+        : 'This purchase named no wallet, so message.from is a placeholder (the zero address): put your own address there, sign with eth_signTypedData_v4, and POST {from, signature} to submitUrl. The signer becomes the payer. The store pays the network fee; you need only the USDC.',
     };
   }
 
@@ -204,17 +210,27 @@ class Store {
     if (!this.relayer) return { ok: false, reason: 'no_relayer' };
     if (purchase.state !== 'awaiting') return { ok: true, already: true, state: purchase.state, txHash: purchase.txHash || purchase.relayTx };
     if (purchase.relayTx) return { ok: true, already: true, txHash: purchase.relayTx, state: purchase.state };
-    // Claim the relay slot first so two clicks cannot pay twice for one record.
-    const claimed = (await this.db.run('UPDATE purchases SET relay_tx=?, relay_at=?, from_addr=COALESCE(from_addr, ?), updated_at=? WHERE id=? AND relay_tx IS NULL AND state=?', ['pending', now(), core.normAddr(auth && auth.from) || null, now(), purchase.id, 'awaiting'])).changes === 1;
+    // Verify before anything is written. Until 2026-10-09 the slot claim
+    // below also bound an unnamed purchase to auth.from BEFORE the signature
+    // was checked, so one refused attempt from the wrong address (the audit's
+    // zero-address probe, say) left the purchase naming it, and the real
+    // signer then got wrong_sender. The check is pure and cheap; do it first.
+    const pre = core.checkAuthorization(purchase, this.s.payTo, auth);
+    if (!pre.ok) return pre;
+    // Claim the relay slot so two clicks cannot pay twice for one record, and
+    // bind the signer as the payer of a purchase that named none.
+    const hadFrom = purchase.fromAddr;
+    const claimed = (await this.db.run('UPDATE purchases SET relay_tx=?, relay_at=?, from_addr=COALESCE(from_addr, ?), updated_at=? WHERE id=? AND relay_tx IS NULL AND state=?', ['pending', now(), core.normAddr(auth.from), now(), purchase.id, 'awaiting'])).changes === 1;
     if (!claimed) { const p = await this.purchaseById(purchase.id); return { ok: true, already: true, txHash: p.relayTx, state: p.state }; }
     const r = await this.relayer.relay(await this.purchaseById(purchase.id), this.s.payTo, auth);
     if (r.ok) {
       await this.db.run('UPDATE purchases SET relay_tx=?, updated_at=? WHERE id=?', [r.txHash, now(), purchase.id]);
       return { ok: true, txHash: r.txHash, state: 'awaiting' };
     }
-    // Nothing went to the chain: free the slot so the buyer can try again
-    // (or pay the other way).
-    await this.db.run('UPDATE purchases SET relay_tx=NULL, relay_at=NULL, updated_at=? WHERE id=? AND relay_tx=?', [now(), purchase.id, 'pending']);
+    // Nothing went to the chain: free the slot so the buyer can try again (or
+    // pay the other way), and unbind a payer this attempt bound, so another
+    // wallet can still pay for the purchase.
+    await this.db.run('UPDATE purchases SET relay_tx=NULL, relay_at=NULL, from_addr=?, updated_at=? WHERE id=? AND relay_tx=?', [hadFrom || null, now(), purchase.id, 'pending']);
     return r;
   }
 
@@ -224,7 +240,7 @@ class Store {
     if (!rel) throw Object.assign(new Error('no such record'), { status: 404 });
     if (!this.enabled()) throw Object.assign(new Error('the store is not taking payments yet'), { status: 503 });
     const from = fromAddr ? core.normAddr(fromAddr) : null;
-    if (fromAddr && !from) throw Object.assign(new Error('bad wallet address'), { status: 400 });
+    if (fromAddr && (!from || from === core.ZERO_ADDRESS)) throw Object.assign(new Error('bad wallet address'), { status: 400 });
     // A transfer mined before the purchase was opened cannot be its payment.
     // A little slack for clock skew between us and the node.
     let fromBlock = null;

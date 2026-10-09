@@ -160,6 +160,42 @@ test('end to end: open, sign, relay, settle, download; a second signature cannot
   assert.equal(g.typedData.message.from.toLowerCase(), buyer.address.toLowerCase(), 'a named buyer is filled in');
   assert.equal(g.typedData.message.value, '5000000');
   assert.match(g.typedData.message.nonce, /^0x[0-9a-f]{64}$/);
+  assert.equal(g.payer.toLowerCase(), buyer.address.toLowerCase());
+  assert.doesNotMatch(g.note, /placeholder/);
+  // What the outside audit found (2026-10-09): a purchase opened without a
+  // wallet carried the zero address as if it were the payer. It is a
+  // placeholder, and the terms now say so; the zero address itself is refused.
+  const anon = await api(base, '/api/store/gasless-record/buy', {});
+  assert.equal(anon.status, 402);
+  assert.equal(anon.json.purchase.from, null);
+  assert.equal(anon.json.payment.gasless.payer, null);
+  assert.equal(anon.json.payment.gasless.typedData.message.from, core.ZERO_ADDRESS);
+  assert.match(anon.json.payment.gasless.note, /placeholder/);
+  const zero = await api(base, '/api/store/gasless-record/buy', { from: core.ZERO_ADDRESS });
+  assert.equal(zero.status, 400);
+  assert.equal(zero.json.error, 'bad wallet address');
+  // The anonymous purchase is paid by whoever signs: the signer becomes the payer.
+  const walkIn = ethers.Wallet.createRandom();
+  const anonSig = await signTerms(walkIn, anon.json.payment.gasless);
+  const zeroFrom = await api(base, `/api/purchase/${anon.json.purchase.publicId}/authorize`, { from: core.ZERO_ADDRESS, signature: anonSig });
+  assert.equal(zeroFrom.status, 409);
+  assert.equal(zeroFrom.json.reason, 'bad_from');
+  assert.equal(zeroFrom.json.purchase.from, null, 'a refused attempt binds nobody as the payer');
+  // A wrong wallet claiming the walk-in's signature is refused and binds nobody either.
+  const impostor = await api(base, `/api/purchase/${anon.json.purchase.publicId}/authorize`, { from: ethers.Wallet.createRandom().address, signature: anonSig });
+  assert.equal(impostor.json.reason, 'bad_signature');
+  assert.equal(impostor.json.purchase.from, null);
+  // A real signature whose send fails (a dry float) unbinds again.
+  chain.floatWei = 1n;
+  const dry = await api(base, `/api/purchase/${anon.json.purchase.publicId}/authorize`, { from: walkIn.address, signature: anonSig });
+  assert.equal(dry.json.reason, 'relayer_dry');
+  assert.equal(dry.json.purchase.from, null, 'a failed send unbinds the payer it bound');
+  chain.floatWei = 10n ** 16n;
+  const bound = await api(base, `/api/purchase/${anon.json.purchase.publicId}/authorize`, { from: walkIn.address, signature: anonSig });
+  assert.equal(bound.status, 200, bound.text);
+  assert.equal(bound.json.purchase.from.toLowerCase(), walkIn.address.toLowerCase(), 'the signer is bound as the payer');
+  assert.equal(chain.sent.length, 1);
+  chain.sent.length = 0;
   const pid = buy.json.purchase.publicId;
   // The same nonce comes back on a second read: the authorization is issued once.
   const again = await api(base, `/api/purchase/${pid}`);
