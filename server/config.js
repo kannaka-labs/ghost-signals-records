@@ -110,6 +110,22 @@ module.exports = {
     authMinutes: int('GSR_AUTH_MINUTES', 30),
   },
 
+  // The USDC ATM (/atm): Coinbase Onramp for the fiat leg (needs a CDP
+  // *Secret* API key: id + secret, PEM or base64 Ed25519; the project id by
+  // itself opens nothing) and, when its key exists, a Base swap desk with
+  // the ATM's surcharge going to feeRecipient.
+  atm: {
+    projectId: env('GSR_CDP_PROJECT_ID', ''),
+    cdpKeyId: env('GSR_CDP_API_KEY_ID', ''),
+    cdpKeySecret: env('GSR_CDP_API_KEY_SECRET', ''),
+    redirectUrl: env('GSR_ATM_REDIRECT_URL', ''),
+    currency: env('GSR_ATM_CURRENCY', 'USD'),
+    swapApiKey: env('GSR_SWAP_API_KEY', ''),
+    swapFeeBps: int('GSR_SWAP_FEE_BPS', 100),
+    slippageBps: int('GSR_SWAP_SLIPPAGE_BPS', 100),
+    // The ATM's cut lands here; the store's pay-to address unless told otherwise.
+    feeRecipient: env('GSR_SWAP_FEE_RECIPIENT', env('GSR_USDC_PAY_TO', '')),
+  },
   npcName: env('GSR_NPC_NAME', 'Vesper'),
   // Vesper's voice in the store: `edge` (edge-tts, free, needs the network),
   // `piper` (local), or `off`. The text still answers when the voice is off.
