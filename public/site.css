@@ -62,6 +62,8 @@ a:hover { color: var(--bone); }
 }
 .wordmark em { font-style: italic; color: var(--dust); }
 .whereabouts { margin: 0; font-family: var(--gear); font-size: .8125rem; color: var(--dust); }
+.topnav { margin-left: auto; display: flex; gap: .5rem; align-items: center; }
+@media (max-width: 40rem) { .topbar { flex-wrap: wrap; } .whereabouts { width: 100%; } }
 
 /* ---------------------------------------------------------------- hero */
 .hero {

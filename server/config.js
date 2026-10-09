@@ -100,6 +100,14 @@ module.exports = {
     tokenHours: int('GSR_DOWNLOAD_TOKEN_HOURS', 72),
     scanMs: int('GSR_USDC_SCAN_MS', 15000),
     previewSec: int('GSR_PREVIEW_SEC', 45),
+    // Gasless checkout: a relayer key that holds gas ETH on Base and nothing
+    // else. Unset = buyers pay their own gas. The float floor is in wei
+    // (0.00002 ETH, about fifty transfers); below it the store stops relaying
+    // and the page falls back to a plain transfer.
+    relayerKey: env('GSR_RELAYER_KEY', ''),
+    relayMinWei: env('GSR_RELAY_MIN_WEI', '20000000000000'),
+    relayPerHour: int('GSR_RELAY_PER_HOUR', 60),
+    authMinutes: int('GSR_AUTH_MINUTES', 30),
   },
 
   npcName: env('GSR_NPC_NAME', 'Vesper'),

@@ -4,7 +4,9 @@
   "description": "A record studio on a floor of Ghost Signals Tower: an NPC helps a person or an agent brief an album, takes payment, and the studio builds it.",
   "license": "SEE LICENSE IN LICENSE",
   "private": false,
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
@@ -12,6 +14,7 @@
     "test": "node --test"
   },
   "dependencies": {
+    "ethers": "^6.17.0",
     "sqlite3": "^5.1.7"
   }
 }

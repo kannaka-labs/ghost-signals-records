@@ -136,12 +136,55 @@
     }).then(function () { return pid ? fetch('/api/purchase/' + pid).then(function (r) { return r.json(); }) : openPurchase(from); })
       .then(function (j) {
         payment = j.payment; if (!payment) throw new Error('this purchase is already settled');
-        say('Confirm the transfer of ' + payment.amount + ' USDC in your wallet.');
-        return eth.request({ method: 'eth_sendTransaction', params: [{ from: from, to: payment.asset, data: payment.calldata, value: '0x0' }] });
+        var g = payment.gasless;
+        if (g && g.enabled && g.typedData) return payGasless(eth, from, g);
+        return paySelf(eth, from);
       })
       .then(function (hash) { say('Sent. Waiting for the chain…'); $('tx').value = hash; poll(); return claim(hash); })
       .catch(function (e) { say(e && e.code === 4001 ? 'Cancelled in the wallet.' : (e && e.message) || 'The wallet did not complete the payment.'); });
   });
+
+  // The buyer pays the gas: a plain USDC transfer from their wallet.
+  function paySelf(eth, from) {
+    say('Confirm the transfer of ' + payment.amount + ' USDC in your wallet. (This way needs a little ETH on Base for the network fee.)');
+    return eth.request({ method: 'eth_sendTransaction', params: [{ from: from, to: payment.asset, data: payment.calldata, value: '0x0' }] });
+  }
+
+  // The store pays the gas: the buyer signs an authorization (no transaction,
+  // no ETH) and the store's relayer submits it. If the wallet cannot sign
+  // typed data, or the store declines (relayer dry), fall back to paySelf.
+  function payGasless(eth, from, g) {
+    var td = JSON.parse(JSON.stringify(g.typedData));
+    td.message.from = from;
+    say('Sign the payment of ' + payment.amount + ' USDC in your wallet. No ETH needed: the store pays the network fee.');
+    return eth.request({ method: 'eth_signTypedData_v4', params: [from, JSON.stringify(td)] })
+      .catch(function (e) {
+        if (e && e.code === 4001) throw e;
+        say('Your wallet could not sign that; paying the usual way instead.');
+        return null;
+      })
+      .then(function (signature) {
+        if (!signature) return paySelf(eth, from);
+        say('Signed. Sending it to the chain for you…');
+        return fetch('/api/purchase/' + pid + '/authorize', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ from: from, signature: signature }) })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d.ok && d.txHash) return d.txHash;
+            if (d.ok && d.purchase && d.purchase.state === 'paid') { showBought(d.purchase); throw { code: 4001, message: 'already paid' }; }
+            var why = {
+              insufficient_usdc: 'That wallet does not hold ' + payment.amount + ' USDC on Base.',
+              expired: 'That authorization expired; reload the page and sign again.',
+              wrong_sender: 'This purchase was opened for a different wallet.',
+              bad_signature: 'The signature did not match; try again.',
+              authorization_used: 'That authorization was already used.',
+            };
+            if (why[d.reason]) throw new Error(why[d.reason]);
+            // relayer_dry, relayer_busy, send_failed, disabled: the store cannot pay the fee right now.
+            say('The store could not cover the fee just now; paying the usual way instead.');
+            return paySelf(eth, from);
+          });
+      });
+  }
   $('pay-other').addEventListener('click', function () {
     if (pid) { $('manual').hidden = false; return; }
     say('');

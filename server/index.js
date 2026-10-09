@@ -19,6 +19,7 @@ const { Suno } = require('./suno');
 const { smtpSend } = require('./mail');
 const { Atelier } = require('./art');
 const { Store } = require('./store');
+const { Relayer } = require('./gasless');
 const { microToUsdc } = require('./store-core');
 const { Vesper, MAX_QUESTION } = require('./vesper');
 
@@ -57,7 +58,7 @@ function allow(ip, capacity = 30, perMs = 60000) {
   b.tokens -= 1; buckets.set(ip, b); return true;
 }
 
-async function main() {
+async function main(opts = {}) {
   const db = await new Db(path.join(cfg.dataDir, 'records.sqlite')).open();
   const orders = new Orders(db, cfg);
   const stripe = new Stripe(cfg, orders, log);
@@ -65,7 +66,8 @@ async function main() {
   const desk = new Desk(cfg, orders, stripe, log, suno);
   const kax = (cfg.kax.agentToken || cfg.kax.towerCredential) && cfg.kax.storey ? new Kax({ ...cfg.kax, userAgent: cfg.userAgent }) : null;
   const tower = new Tower(cfg, db, orders, desk, kax, log);
-  const store = new Store(db, cfg, { log, ffmpeg: process.env.GSR_FFMPEG === '' ? null : (process.env.GSR_FFMPEG || 'ffmpeg') });
+  const relayer = new Relayer(cfg.store, { log, chain: opts.relayChain });
+  const store = new Store(db, cfg, { log, ffmpeg: process.env.GSR_FFMPEG === '' ? null : (process.env.GSR_FFMPEG || 'ffmpeg'), relayer: relayer.enabled() ? relayer : null });
   const vesper = new Vesper(cfg, store, { log });
 
   const server = http.createServer(async (req, res) => {
@@ -113,13 +115,27 @@ async function main() {
         const body = await readJson(req, 4 * 1024);
         const email = typeof body.email === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(body.email) ? body.email.trim().slice(0, 200) : undefined;
         const purchase = await store.buy(m[1], { email, fromAddr: typeof body.from === 'string' ? body.from : undefined });
-        return send(res, 402, { purchase: publicPurchase(purchase, store, cfg), payment: store.paymentTerms(purchase) });
+        return send(res, 402, { purchase: publicPurchase(purchase, store, cfg), payment: { ...store.paymentTerms(purchase), gasless: await store.gaslessTerms(purchase) } });
       }
       if ((m = /^\/api\/purchase\/([A-Za-z0-9_-]{16,32})$/.exec(p)) && req.method === 'GET') {
         const purchase = await store.purchase(m[1]);
         if (!purchase) return send(res, 404, { error: 'not found' });
         const rel = await store.release(purchase.sku, { includeUnpublished: true });
-        return send(res, 200, { purchase: publicPurchase(purchase, store, cfg), payment: purchase.state === 'awaiting' ? store.paymentTerms(purchase) : null, release: rel ? publicRelease(rel) : null });
+        const payment = purchase.state === 'awaiting' ? { ...store.paymentTerms(purchase), gasless: await store.gaslessTerms(purchase) } : null;
+        return send(res, 200, { purchase: publicPurchase(purchase, store, cfg), payment, release: rel ? publicRelease(rel) : null });
+      }
+      // Gasless: the buyer signed the authorization the store issued; the
+      // relayer submits it and pays the gas. The chain then settles the
+      // purchase exactly as a plain transfer would (watcher or /tx claim).
+      if ((m = /^\/api\/purchase\/([A-Za-z0-9_-]{16,32})\/authorize$/.exec(p)) && req.method === 'POST') {
+        if (!allow(ip, 10)) return send(res, 429, { error: 'slow down' });
+        const purchase = await store.purchase(m[1]);
+        if (!purchase) return send(res, 404, { error: 'not found' });
+        const body = await readJson(req, 4 * 1024);
+        const auth = { from: typeof body.from === 'string' ? body.from : '', signature: typeof body.signature === 'string' ? body.signature : undefined, v: body.v, r: body.r, s: body.s };
+        const r = await store.relay(purchase, auth);
+        const fresh = await store.purchase(m[1]);
+        return send(res, r.ok ? 200 : 409, { ...r, purchase: publicPurchase(fresh, store, cfg) });
       }
       if ((m = /^\/api\/purchase\/([A-Za-z0-9_-]{16,32})\/tx$/.exec(p)) && req.method === 'POST') {
         if (!allow(ip, 40)) return send(res, 429, { error: 'slow down' });
@@ -182,7 +198,7 @@ async function main() {
           steps: [
             `GET ${cfg.publicUrl}/api/store and pick a sku.`,
             `POST ${cfg.publicUrl}/api/store/<sku>/buy with JSON {"from": "<your wallet address>", "email": "<optional>"}; the 402 reply carries payment.payTo, payment.amountMicro, payment.asset (USDC on Base, chain 8453) and payment.calldata for the transfer.`,
-            'Send exactly that amount of USDC to payTo from the wallet you named.',
+            'Either send exactly that amount of USDC to payTo from the wallet you named (you pay the gas), or, with no ETH at all: sign payment.gasless.typedData (EIP-712, your address in message.from) with eth_signTypedData_v4 and POST {"from", "signature"} to payment.gasless.submitUrl; the store submits it and pays the gas. payment.gasless.enabled is false when the relayer is off or dry.',
             `POST ${cfg.publicUrl}/api/purchase/<publicId>/tx with {"hash": "<tx hash>"} (or wait: the store watches the chain and settles on its own).`,
             `GET ${cfg.publicUrl}/api/purchase/<publicId>: when state is "paid", purchase.download is your zip (mp3s, cover art, README).`,
           ],
@@ -342,6 +358,8 @@ async function main() {
         const auth = req.headers.authorization || '';
         if (!cfg.adminToken || auth !== `Bearer ${cfg.adminToken}`) return send(res, cfg.adminToken ? 401 : 503, { error: cfg.adminToken ? 'unauthorized' : 'admin token not set' });
         if (p === '/admin/orders' && req.method === 'GET') return send(res, 200, { orders: await orders.recent(100) });
+        // The gasless relayer: its address and float, and whether it will relay now.
+        if (p === '/admin/relayer' && req.method === 'GET') return send(res, 200, relayer.enabled() ? await relayer.status() : { enabled: false, reason: 'no_key' });
         if (p === '/admin/radio/queue' && req.method === 'GET') {
           const q = await orders.radioQueue();
           return send(res, 200, {

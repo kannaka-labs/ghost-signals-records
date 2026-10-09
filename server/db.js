@@ -112,6 +112,12 @@ const SCHEMA = [
      created_at TEXT NOT NULL,
      updated_at TEXT NOT NULL
    )`,
+  // Gasless checkout (EIP-3009): the authorization the store issued for the
+  // purchase and the relayed transaction, once there is one.
+  `ALTER TABLE purchases ADD COLUMN auth_nonce TEXT`,
+  `ALTER TABLE purchases ADD COLUMN auth_valid_before INTEGER`,
+  `ALTER TABLE purchases ADD COLUMN relay_tx TEXT`,
+  `ALTER TABLE purchases ADD COLUMN relay_at TEXT`,
   `CREATE INDEX IF NOT EXISTS purchases_state ON purchases(state, amount_micro, from_addr)`,
   `CREATE INDEX IF NOT EXISTS purchases_tx ON purchases(tx_hash)`,
   `CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT)`,
