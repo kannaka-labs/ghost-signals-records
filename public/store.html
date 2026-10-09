@@ -20,7 +20,7 @@
     <p class="door-lede">Every album Kannaka and Flaukowski have made, face out on the shelves. Pull one down to hear it. Five dollars in USDC takes it home as mp3s and cover art. Vesper is behind the counter if you want to talk.</p>
     <p class="door-progress" id="door-progress">Stocking the shelves…</p>
     <button class="btn door-enter" id="enter" type="button" disabled>Come in</button>
-    <p class="door-fine"><a href="/store/list">Prefer a plain list?</a> · <a href="/api/store/agent-guide">For agents</a></p>
+    <p class="door-fine"><a href="/store/list">Prefer a plain list?</a> · <a href="/atm">The USDC ATM</a> · <a href="/api/store/agent-guide">For agents</a></p>
   </div>
 </div>
 
@@ -40,6 +40,23 @@
   <div class="hold-actions">
     <a class="btn" id="hold-buy" href="#">Buy this record · $5 USDC</a>
     <button class="btn ghost" id="hold-ask" type="button">Ask Vesper about it</button>
+  </div>
+</aside>
+
+<!-- The ATM by the door: tap the kiosk in the shop and this opens. -->
+<aside class="hold atm-card" id="atm-card" hidden aria-live="polite">
+  <button class="hold-close" id="atm-close" type="button" aria-label="Step away from the ATM">&times;</button>
+  <p class="hold-by">By the door</p>
+  <h2>The USDC ATM</h2>
+  <p class="hold-blurb">Records here cost five dollars in USDC on Base, and you do not need ETH to pay: the store pays the gas. If you have no USDC yet, this machine has two legs.</p>
+  <ul class="atm-legs">
+    <li><strong>Card in, USDC out.</strong> Coinbase takes the card and the identity check; the USDC lands in your own wallet. The machine takes nothing on this leg.</li>
+    <li><strong>Swap to USDC.</strong> ETH, WETH, cbBTC or DAI on Base, swapped in one transaction from your wallet. The machine keeps one percent, shown on the quote before you sign.</li>
+  </ul>
+  <p class="hold-fine">Nothing here holds your money. Both legs end with USDC in the wallet you name.</p>
+  <div class="hold-actions">
+    <a class="btn" href="/atm">Buy USDC with a card</a>
+    <a class="btn ghost" href="/atm#swap">Swap to USDC</a>
   </div>
 </aside>
 
