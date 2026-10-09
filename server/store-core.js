@@ -11,6 +11,7 @@ const CHAIN_ID = 8453;
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
 function isAddress(a) { return /^0x[0-9a-fA-F]{40}$/.test(String(a || '')); }
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 function normAddr(a) { return isAddress(a) ? `0x${String(a).slice(2).toLowerCase()}` : null; }
 function isTxHash(h) { return /^0x[0-9a-fA-F]{64}$/.test(String(h || '')); }
 /** An address as a 32-byte log topic, and back. */
@@ -116,7 +117,7 @@ function authTypedData(purchase, payTo, from) {
 function checkAuthorization(purchase, payTo, auth, nowSec = Math.floor(Date.now() / 1000)) {
   if (!purchase || purchase.state !== 'awaiting') return { ok: false, reason: 'not_awaiting' };
   if (!purchase.authNonce || !purchase.authValidBefore) return { ok: false, reason: 'no_authorization_issued' };
-  if (!auth || !isAddress(auth.from)) return { ok: false, reason: 'bad_from' };
+  if (!auth || !isAddress(auth.from) || normAddr(auth.from) === ZERO_ADDRESS) return { ok: false, reason: 'bad_from' };
   if (purchase.fromAddr && normAddr(auth.from) !== normAddr(purchase.fromAddr)) return { ok: false, reason: 'wrong_sender' };
   if (Number(purchase.authValidBefore) <= nowSec + 60) return { ok: false, reason: 'expired' };
   let sig;
@@ -182,5 +183,5 @@ module.exports = {
   USDC_BASE, CHAIN_ID, TRANSFER_TOPIC, USDC_DOMAIN, AUTH_TYPES,
   isAddress, normAddr, isTxHash, isBytes32, addrTopic, topicAddr, microToUsdc, transferCalldata,
   parseTransferLog, matchTransfer, ledgerKey, signDownload, verifyDownload, slug, readmeText,
-  authMessage, authTypedData, checkAuthorization, toChecksum,
+  authMessage, authTypedData, checkAuthorization, toChecksum, ZERO_ADDRESS,
 };

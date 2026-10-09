@@ -213,7 +213,7 @@ async function main(opts = {}) {
             `GET ${cfg.publicUrl}/api/store and pick a sku.`,
             `POST ${cfg.publicUrl}/api/store/<sku>/buy with JSON {"from": "<your wallet address>", "email": "<optional>"}; the 402 reply carries payment.payTo, payment.amountMicro, payment.asset (USDC on Base, chain 8453) and payment.calldata for the transfer.`,
             'Either send exactly that amount of USDC to payTo from the wallet you named (you pay the gas), or, with no ETH at all: sign payment.gasless.typedData (EIP-712, your address in message.from) with eth_signTypedData_v4 and POST {"from", "signature"} to payment.gasless.submitUrl; the store submits it and pays the gas. payment.gasless.enabled is false when the relayer is off or dry.',
-            `POST ${cfg.publicUrl}/api/purchase/<publicId>/tx with {"hash": "<tx hash>"} (or wait: the store watches the chain and settles on its own).`,
+            `POST ${cfg.publicUrl}/api/purchase/<publicId>/tx with {"hash": "<tx hash>"}. If the purchase named your wallet ("from"), the store's chain watcher also settles it on its own; a purchase opened without "from" is settled only by this call, since the watcher cannot tell whose transfer it is.`,
             `GET ${cfg.publicUrl}/api/purchase/<publicId>: when state is "paid", purchase.download is your zip (mp3s, cover art, README).`,
           ],
           rules: [
@@ -221,6 +221,8 @@ async function main(opts = {}) {
             'Downloads are for personal listening; see README.txt in the zip.',
             'Errors: a 4xx with {"error"} or {"ok": false, "reason"} is yours to fix (bad address, amount, signature or hash); a 503 means a provider or key on our side failed; a 429 carries retryAfterSec and a Retry-After header, per lane (checkout, claims, the ATM legs are throttled separately).',
             `The gasless authorization expires 30 minutes after it is issued; GET ${cfg.publicUrl}/api/purchase/<publicId> issues a fresh one while the purchase is still awaiting.`,
+            'Name your wallet when you open the purchase. Without "from", payment.gasless.payer is null and typedData.message.from is the zero address as a placeholder: replace it with your own address before signing, and the signer becomes the payer. The zero address itself is refused as a wallet.',
+            'Unknown ids under /api/ answer 404 with {"error": "not found"}; a purchase id is 16 to 32 URL-safe characters.',
           ],
         }, undefined, { 'cache-control': 'public, max-age=3600' });
       }
@@ -468,6 +470,10 @@ async function main(opts = {}) {
         const f = path.join(PUBLIC, p.slice(1));
         if (fs.existsSync(f)) return send(res, 200, fs.readFileSync(f), p.endsWith('.css') ? 'text/css; charset=utf-8' : 'application/javascript; charset=utf-8', { 'cache-control': 'public, max-age=300' });
       }
+      // An unknown path under /api/ (a purchase id too short to match a route,
+      // a typo) answers JSON, so an agent can tell "wrong id" from "no site".
+      // The outside audit of 2026-10-09 found it answering the HTML page.
+      if (p.startsWith('/api/')) return send(res, 404, { error: 'not found' });
       return html(res, 404, 'notfound.html');
     } catch (e) {
       const status = e.status || 500;
