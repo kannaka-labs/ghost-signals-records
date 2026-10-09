@@ -98,7 +98,9 @@ test('session: the project id alone opens nothing; a secret key mints a token fo
   assert.equal(u.searchParams.get('sessionToken'), 'single-use-token');
   assert.equal(u.searchParams.get('presetFiatAmount'), '50');
   assert.equal(r.amount, 50);
-  assert.equal((await atm.session({ address: '0x1111111111111111111111111111111111111111', amount: 7 })).amount, AMOUNTS[1], 'an amount off the menu becomes the default');
+  const off = await atm.session({ address: '0x1111111111111111111111111111111111111111', amount: 7 });
+  assert.equal(off.reason, 'bad_amount', 'an amount off the menu is refused, never turned into the default');
+  assert.deepEqual(off.amounts, AMOUNTS);
   // A loopback or missing ip is not sent as the client ip.
   const r2 = await atm.session({ address: '0x1111111111111111111111111111111111111111', amount: 10, ip: '127.0.0.1' });
   assert.equal(r2.ok, true);
@@ -164,6 +166,14 @@ test('swap desk: units, the 0x request carries our key and our fee, the quote is
   assert.equal(calls[calls.length - 1].u.searchParams.get('taker'), '0x1111111111111111111111111111111111111111');
   assert.deepEqual(firm.transaction, { to: '0x0000000000001ff3684f28c67538d4d072c22734', data: '0xabcdef', value: `0x${(15000000000000000n).toString(16)}`, gas: '0x33450' });
   assert.equal(firm.allowance, null, 'native ETH needs no approval');
+  assert.equal(firm.balanceShort, false, '0x reported no balance issue and no balance reader was given');
+  // 0x does not report a native ETH shortfall; the ATM reads the balance itself when it can.
+  const empty = new Atm({ swapApiKey: 'zx-key', swapFeeBps: 100, feeRecipient: FEE_TO }, { fetch: fakeFetch, ethBalance: async () => 0n });
+  assert.equal((await empty.swapQuote({ sellToken: 'ETH', sellAmount: '0.015', taker: '0x1111111111111111111111111111111111111111', firm: true })).balanceShort, true, 'an empty wallet is short');
+  const rich = new Atm({ swapApiKey: 'zx-key', swapFeeBps: 100, feeRecipient: FEE_TO }, { fetch: fakeFetch, ethBalance: async () => '20000000000000000' });
+  assert.equal((await rich.swapQuote({ sellToken: 'ETH', sellAmount: '0.015', taker: '0x1111111111111111111111111111111111111111', firm: true })).balanceShort, false);
+  const unreadable = new Atm({ swapApiKey: 'zx-key', swapFeeBps: 100, feeRecipient: FEE_TO }, { fetch: fakeFetch, ethBalance: async () => { throw new Error('rpc down'); } });
+  assert.equal((await unreadable.swapQuote({ sellToken: 'ETH', sellAmount: '0.015', taker: '0x1111111111111111111111111111111111111111', firm: true })).ok, true, 'an unreadable balance does not block the quote');
   const erc = await atm.swapQuote({ sellToken: 'cbbtc', sellAmount: '0.001', taker: '0x1111111111111111111111111111111111111111', firm: true });
   assert.equal(erc.ok, true);
   assert.equal(erc.sell.units, '100000');
@@ -190,4 +200,18 @@ test('http: /atm renders, /api/atm reports the honest state, /api/atm/session an
   const s = await fetch(`${base}/api/atm/session`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ address: '0x1111111111111111111111111111111111111111', amount: 20 }) });
   assert.equal(s.status, 503);
   assert.equal((await s.json()).reason, 'onramp_not_configured');
+  // A visitor's own mistake is a 400, not a 503 that tells an agent to retry.
+  const bad = await fetch(`${base}/api/atm/session`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ address: 'nope', amount: 20 }) });
+  assert.equal(bad.status, 503, 'with no key the leg is closed before the address is read');
+  const badSwap = await fetch(`${base}/api/atm/swap?sellToken=DOGE&sellAmount=1`);
+  assert.equal(badSwap.status, 503, 'with no 0x key the desk is closed before the token is read');
+});
+
+test('the visitor-caused reasons map to 400, everything else the ATM returns stays a 503', () => {
+  // The config is read once at module load, so the open-leg statuses are pinned
+  // here by the set the routes consult; the stranger's walk of 2026-10-09 found
+  // bad_address answered as a 503, which told an agent to retry a typo.
+  const { CLIENT_REASONS } = require('../server/index');
+  for (const r of ['bad_address', 'bad_amount', 'bad_taker', 'unknown_token']) assert.ok(CLIENT_REASONS.has(r), r);
+  for (const r of ['onramp_not_configured', 'onramp_rejected_key', 'onramp_unreachable', 'onramp_error', 'swap_not_configured', 'swap_rejected_key', 'swap_unreachable', 'swap_error']) assert.ok(!CLIENT_REASONS.has(r), r);
 });

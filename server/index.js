@@ -48,16 +48,28 @@ function cookie(req) {
   return m ? m[1] : null;
 }
 
-// Per-IP throttle on the desk and checkout: a small token bucket.
+// Per-IP, per-lane throttle: a small token bucket for each thing a visitor can
+// do (checkout, claims, Vesper, the onramp, the swap desk, the desk). One
+// bucket shared across every route meant a visitor who had priced four swaps
+// and opened a purchase could not open Coinbase (found by the stranger's walk
+// of 2026-10-09). Returns 0 when the call may proceed, else the whole seconds
+// to wait, which the 429 carries as retryAfterSec and a Retry-After header.
 const buckets = new Map();
-function allow(ip, capacity = 30, perMs = 60000) {
+function throttle(ip, capacity = 30, lane = 'desk', perMs = 60000) {
+  const key = `${ip}|${lane}`;
   const nowMs = Date.now();
-  const b = buckets.get(ip) || { tokens: capacity, at: nowMs };
+  const b = buckets.get(key) || { tokens: capacity, at: nowMs };
   b.tokens = Math.min(capacity, b.tokens + ((nowMs - b.at) / perMs) * capacity);
   b.at = nowMs;
-  if (b.tokens < 1) { buckets.set(ip, b); return false; }
-  b.tokens -= 1; buckets.set(ip, b); return true;
+  if (b.tokens < 1) { buckets.set(key, b); return Math.max(1, Math.ceil(((1 - b.tokens) / capacity) * (perMs / 1000))); }
+  b.tokens -= 1; buckets.set(key, b); return 0;
 }
+function allow(ip, capacity = 30, lane = 'desk', perMs = 60000) { return throttle(ip, capacity, lane, perMs) === 0; }
+function slow(res, wait) { return send(res, 429, { error: 'slow down', retryAfterSec: wait }, undefined, { 'retry-after': String(wait) }); }
+// Reasons the visitor caused (a 400), as opposed to a provider or key that
+// failed (a 503). A client error dressed as a 503 tells an agent to retry
+// something that will never work.
+const CLIENT_REASONS = new Set(['bad_address', 'bad_amount', 'bad_taker', 'unknown_token']);
 
 async function main(opts = {}) {
   const db = await new Db(path.join(cfg.dataDir, 'records.sqlite')).open();
@@ -70,7 +82,7 @@ async function main(opts = {}) {
   const relayer = new Relayer(cfg.store, { log, chain: opts.relayChain });
   const store = new Store(db, cfg, { log, ffmpeg: process.env.GSR_FFMPEG === '' ? null : (process.env.GSR_FFMPEG || 'ffmpeg'), relayer: relayer.enabled() ? relayer : null });
   const vesper = new Vesper(cfg, store, { log });
-  const atm = new Atm(cfg.atm, { log, fetch: opts.atmFetch });
+  const atm = new Atm(cfg.atm, { log, fetch: opts.atmFetch, ethBalance: relayer.chain && relayer.chain.balanceWei ? (a) => relayer.chain.balanceWei(a) : null });
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
@@ -113,7 +125,7 @@ async function main(opts = {}) {
       // Open a purchase. Returns the terms (address, amount, calldata). The
       // same body serves an agent as a 402: send the USDC, then POST the tx.
       if ((m = /^\/api\/store\/([a-z0-9-]{1,48})\/buy$/.exec(p)) && req.method === 'POST') {
-        if (!allow(ip, 10)) return send(res, 429, { error: 'slow down' });
+        { const w = throttle(ip, 10, 'checkout'); if (w) return slow(res, w); }
         const body = await readJson(req, 4 * 1024);
         const email = typeof body.email === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(body.email) ? body.email.trim().slice(0, 200) : undefined;
         const purchase = await store.buy(m[1], { email, fromAddr: typeof body.from === 'string' ? body.from : undefined });
@@ -130,7 +142,7 @@ async function main(opts = {}) {
       // relayer submits it and pays the gas. The chain then settles the
       // purchase exactly as a plain transfer would (watcher or /tx claim).
       if ((m = /^\/api\/purchase\/([A-Za-z0-9_-]{16,32})\/authorize$/.exec(p)) && req.method === 'POST') {
-        if (!allow(ip, 10)) return send(res, 429, { error: 'slow down' });
+        { const w = throttle(ip, 10, 'checkout'); if (w) return slow(res, w); }
         const purchase = await store.purchase(m[1]);
         if (!purchase) return send(res, 404, { error: 'not found' });
         const body = await readJson(req, 4 * 1024);
@@ -140,7 +152,7 @@ async function main(opts = {}) {
         return send(res, r.ok ? 200 : 409, { ...r, purchase: publicPurchase(fresh, store, cfg) });
       }
       if ((m = /^\/api\/purchase\/([A-Za-z0-9_-]{16,32})\/tx$/.exec(p)) && req.method === 'POST') {
-        if (!allow(ip, 40)) return send(res, 429, { error: 'slow down' });
+        { const w = throttle(ip, 40, 'claim'); if (w) return slow(res, w); }
         const purchase = await store.purchase(m[1]);
         if (!purchase) return send(res, 404, { error: 'not found' });
         const body = await readJson(req, 2 * 1024);
@@ -179,7 +191,7 @@ async function main(opts = {}) {
         return send(res, 200, { name: vesper.name, reply: text, audio: await vesper.speak(text), voice: vesper.voiceEnabled() });
       }
       if (p === '/api/vesper/say' && req.method === 'POST') {
-        if (!allow(ip, 12)) return send(res, 429, { error: 'slow down' });
+        { const w = throttle(ip, 12, 'vesper'); if (w) return slow(res, w); }
         const body = await readJson(req, 4 * 1024);
         const text = typeof body.text === 'string' ? body.text.slice(0, MAX_QUESTION) : '';
         const about = typeof body.about === 'string' && /^[a-z0-9-]{1,48}$/.test(body.about) ? body.about : undefined;
@@ -204,7 +216,12 @@ async function main(opts = {}) {
             `POST ${cfg.publicUrl}/api/purchase/<publicId>/tx with {"hash": "<tx hash>"} (or wait: the store watches the chain and settles on its own).`,
             `GET ${cfg.publicUrl}/api/purchase/<publicId>: when state is "paid", purchase.download is your zip (mp3s, cover art, README).`,
           ],
-          rules: ['One transfer pays for one purchase. A transfer mined before the purchase was opened does not count.', 'Downloads are for personal listening; see README.txt in the zip.'],
+          rules: [
+            'One transfer pays for one purchase. A transfer mined before the purchase was opened does not count.',
+            'Downloads are for personal listening; see README.txt in the zip.',
+            'Errors: a 4xx with {"error"} or {"ok": false, "reason"} is yours to fix (bad address, amount, signature or hash); a 503 means a provider or key on our side failed; a 429 carries retryAfterSec and a Retry-After header, per lane (checkout, claims, the ATM legs are throttled separately).',
+            `The gasless authorization expires 30 minutes after it is issued; GET ${cfg.publicUrl}/api/purchase/<publicId> issues a fresh one while the purchase is still awaiting.`,
+          ],
         }, undefined, { 'cache-control': 'public, max-age=3600' });
       }
       if ((m = /^\/vendor\/([a-z0-9][a-z0-9.-]{0,60}\.js)$/.exec(p))) {
@@ -218,18 +235,18 @@ async function main(opts = {}) {
       if (p === '/atm' || p === '/atm/') return html(res, 200, 'atm.html');
       if (p === '/api/atm') return send(res, 200, atm.config(), undefined, { 'cache-control': 'public, max-age=60' });
       if (p === '/api/atm/session' && req.method === 'POST') {
-        if (!allow(ip, 6)) return send(res, 429, { error: 'slow down' });
+        { const w = throttle(ip, 6, 'onramp'); if (w) return slow(res, w); }
         const body = await readJson(req, 2 * 1024);
         const r = await atm.session({ address: typeof body.address === 'string' ? body.address : '', amount: body.amount, currency: typeof body.currency === 'string' ? body.currency : undefined, ip });
-        return send(res, r.ok ? 200 : 503, r);
+        return send(res, r.ok ? 200 : CLIENT_REASONS.has(r.reason) ? 400 : 503, r);
       }
       // The swap desk: an indicative price (GET) or a firm, sendable quote
       // (POST, with the taker's address). The 0x key never leaves this process.
       if (p === '/api/atm/swap' && (req.method === 'GET' || req.method === 'POST')) {
-        if (!allow(ip, 20)) return send(res, 429, { error: 'slow down' });
+        { const w = throttle(ip, 20, 'swap'); if (w) return slow(res, w); }
         const body = req.method === 'POST' ? await readJson(req, 2 * 1024) : Object.fromEntries(url.searchParams);
         const r = await atm.swapQuote({ sellToken: body.sellToken, sellAmount: body.sellAmount, taker: typeof body.taker === 'string' ? body.taker : undefined, firm: req.method === 'POST' });
-        return send(res, r.ok ? 200 : (r.reason === 'swap_not_configured' ? 503 : 400), r);
+        return send(res, r.ok ? 200 : CLIENT_REASONS.has(r.reason) ? 400 : r.reason === 'no_liquidity' ? 409 : 503, r);
       }
       if ((m = /^\/store\/([a-z0-9-]{1,48})$/.exec(p))) {
         const r = await store.release(m[1]);
@@ -250,7 +267,7 @@ async function main(opts = {}) {
 
       // ---- the desk, on the web -----------------------------------------
       if (p === '/api/desk' && req.method === 'POST') {
-        if (!allow(ip)) return send(res, 429, { error: 'slow down' });
+        { const w = throttle(ip, 30, 'desk'); if (w) return slow(res, w); }
         const body = await readJson(req, 16 * 1024);
         let sid = cookie(req) || (typeof body.session === 'string' ? body.session : null);
         let session = sid ? await orders.sessionById(sid) : null;
@@ -300,7 +317,7 @@ async function main(opts = {}) {
       // the same thing that lets you play it lets you share it or spend its
       // spin. Both are reversible except an airing that already happened.
       if ((m = /^\/api\/album\/([A-Za-z0-9_-]{16,32})\/(feature|radio)$/.exec(p)) && req.method === 'POST') {
-        if (!allow(ip, 20)) return send(res, 429, { error: 'slow down' });
+        { const w = throttle(ip, 20, 'album'); if (w) return slow(res, w); }
         const o = await orders.getByPublicId(m[1]);
         if (!o) return send(res, 404, { error: 'not found' });
         if (o.state !== 'delivered') return send(res, 409, { error: 'the record is not finished yet' });
@@ -488,4 +505,4 @@ function publicPurchase(p, store, cfg) {
 
 if (require.main === module) main().catch((e) => { log(`fatal: ${e.stack || e.message}`); process.exit(1); });
 
-module.exports = { main, allow };
+module.exports = { main, allow, throttle, CLIENT_REASONS };

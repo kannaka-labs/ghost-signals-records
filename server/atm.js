@@ -97,10 +97,14 @@ function fromUnits(units, decimals, places = 6) {
 
 class Atm {
   /** @param {object} a cfg.atm  @param {object} deps { log, fetch } */
-  constructor(a, { log, fetch: f } = {}) {
+  constructor(a, { log, fetch: f, ethBalance } = {}) {
     this.a = a || {};
     this.log = log || (() => {});
     this.fetch = f || globalThis.fetch;
+    // Optional: async (address) -> wei as bigint/string. 0x reports an ERC-20
+    // balance shortfall in issues.balance but not a native ETH one, so a firm
+    // ETH quote for an empty wallet looked sendable (stranger's walk, 2026-10-09).
+    this.ethBalance = ethBalance || null;
   }
 
   sellTokens() { return Object.entries(SELL_TOKENS).map(([k, t]) => ({ key: k, label: t.label, address: t.address, decimals: t.decimals })); }
@@ -150,6 +154,10 @@ class Atm {
       // An ERC-20 sell needs the AllowanceHolder approved first; native ETH does not.
       out.allowance = al && tk.address !== NATIVE_ETH ? { spender: al.spender, actual: String(al.actual || '0'), needed: units, token: tk.address } : null;
       out.balanceShort = Boolean(j.issues && j.issues.balance);
+      if (tk.address === NATIVE_ETH && this.ethBalance) {
+        try { if (BigInt(await this.ethBalance(takerAddr)) < BigInt(units)) out.balanceShort = true; }
+        catch (e) { this.log(`atm: eth balance of ${takerAddr} unreadable: ${e.message}`); }
+      }
     }
     return out;
   }
@@ -175,7 +183,10 @@ class Atm {
     if (!this.onrampReady()) return { ok: false, reason: 'onramp_not_configured' };
     const addr = core.normAddr(address);
     if (!addr) return { ok: false, reason: 'bad_address' };
-    const amt = AMOUNTS.includes(Number(amount)) ? Number(amount) : AMOUNTS[1];
+    // An amount off the menu is refused with the menu, not quietly turned into
+    // the default: an agent asking for $7 must not be handed a $20 session.
+    if (!AMOUNTS.includes(Number(amount))) return { ok: false, reason: 'bad_amount', amounts: AMOUNTS };
+    const amt = Number(amount);
     const cur = /^[A-Z]{3}$/.test(String(currency || '')) ? currency : (this.a.currency || 'USD');
     const body = { addresses: [{ address: core.toChecksum(addr), blockchains: ['base'] }], assets: ['USDC'] };
     if (ip && /^[0-9.]+$|^[0-9a-f:]+$/i.test(ip) && ip !== '127.0.0.1' && ip !== '::1') body.clientIp = ip;

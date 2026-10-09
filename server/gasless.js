@@ -31,6 +31,7 @@ function ethersChain({ rpcUrls, key }) {
   return {
     address: wallet.address,
     async relayerBalanceWei() { return provider.getBalance(wallet.address); },
+    async balanceWei(addr) { return provider.getBalance(addr); },
     async balanceOf(addr) { return usdc.balanceOf(addr); },
     async authorizationState(addr, nonce) { return usdc.authorizationState(addr, nonce); },
     async send(a) {
