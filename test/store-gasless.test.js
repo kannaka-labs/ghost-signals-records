@@ -23,7 +23,7 @@ process.env.GSR_BASE_RPC_URLS = 'http://127.0.0.1:9/';
 process.env.GSR_RELAY_PER_HOUR = '3';
 
 const core = require('../server/store-core');
-const { Relayer } = require('../server/gasless');
+const { Relayer, isRevert } = require('../server/gasless');
 const { main } = require('../server/index');
 
 const PAY_TO = '0x571d2c659bd01688e2d7aa1c9658445a1da9c2cd';
@@ -56,7 +56,10 @@ function fakeChain({ usdcBalance = 10000000n, floatWei = 10n ** 16n } = {}) {
     async balanceOf() { return chain.usdcBalance; },
     async authorizationState(addr, nonce) { return chain.used.has(`${addr.toLowerCase()}:${nonce}`); },
     async send(a) {
-      if (chain.failSend) throw new Error('execution reverted');
+      // 'revert': USDC refused it (ethers v6 shape); anything else truthy: the
+      // provider failed before the chain answered.
+      if (chain.failSend === 'revert') throw Object.assign(new Error('execution reverted: FiatTokenV2: invalid signature'), { code: 'CALL_EXCEPTION', shortMessage: 'execution reverted: "FiatTokenV2: invalid signature"', reason: 'FiatTokenV2: invalid signature' });
+      if (chain.failSend) throw Object.assign(new Error('request timeout'), { code: 'TIMEOUT', shortMessage: 'request timeout' });
       chain.sent.push(a);
       chain.used.add(`${a.from.toLowerCase()}:${a.nonce}`);
       // The authorization lands in the next block as a Transfer from -> to.
@@ -80,7 +83,7 @@ async function api(base, p, body, headers = {}) {
   const r = await fetch(base + p, { method: body === undefined ? 'GET' : 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': `10.8.${Math.floor(ipN / 250)}.${ipN % 250}`, ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await r.text();
   let json = null; try { json = JSON.parse(text); } catch { /* not json */ }
-  return { status: r.status, json, text };
+  return { status: r.status, json, text, headers: r.headers };
 }
 
 /** Sign the store's typed data the way a wallet would, as `wallet`. */
@@ -243,10 +246,16 @@ test('end to end: a relay that fails frees the slot; a dry float turns the terms
   const pid = buy.json.purchase.publicId;
   const g = buy.json.payment.gasless;
   assert.equal(g.typedData.message.from, '0x0000000000000000000000000000000000000000', 'an unnamed buyer fills in their own address');
-  chain.failSend = true;
+  chain.failSend = 'timeout';
   const failed = await api(base, `/api/purchase/${pid}/authorize`, { from: buyer.address, signature: await signTerms(buyer, g) });
   assert.equal(failed.status, 503, 'a send that failed on our side is not the buyer\'s to fix');
   assert.equal(failed.json.reason, 'send_failed');
+  assert.equal(failed.headers.get('retry-after'), '30', 'a 503 says when to try again');
+  chain.failSend = 'revert';
+  const refused = await api(base, `/api/purchase/${pid}/authorize`, { from: buyer.address, signature: await signTerms(buyer, g) });
+  assert.equal(refused.status, 409, 'USDC refusing the authorization is not ours to retry');
+  assert.equal(refused.json.reason, 'send_reverted');
+  assert.equal(refused.headers.get('retry-after'), null);
   chain.failSend = false;
   const retry = await api(base, `/api/purchase/${pid}/authorize`, { from: buyer.address, signature: await signTerms(buyer, g) });
   assert.equal(retry.status, 200, 'the slot was freed, so the buyer may try again');
@@ -259,4 +268,14 @@ test('end to end: a relay that fails frees the slot; a dry float turns the terms
   const st = await api(base, '/admin/relayer', undefined, { authorization: 'Bearer adm' });
   assert.equal(st.json.enabled, false);
   assert.equal(st.json.address, RELAYER);
+});
+
+test('isRevert: only a revert the chain answered is the caller\'s', () => {
+  assert.equal(isRevert({ code: 'CALL_EXCEPTION', reason: 'FiatTokenV2: authorization is used or canceled' }), true);
+  assert.equal(isRevert({ code: 'CALL_EXCEPTION', data: '0x08c379a0' }), true);
+  assert.equal(isRevert({ code: 'CALL_EXCEPTION', shortMessage: 'execution reverted (unknown custom error)' }), true);
+  assert.equal(isRevert({ code: 'CALL_EXCEPTION', shortMessage: 'missing revert data', data: null }), false, 'some RPCs fail this way; it stays ours');
+  assert.equal(isRevert({ code: 'TIMEOUT', shortMessage: 'request timeout' }), false);
+  assert.equal(isRevert({ code: 'INSUFFICIENT_FUNDS', shortMessage: 'insufficient funds for intrinsic transaction cost' }), false, 'the relayer float is ours');
+  assert.equal(isRevert(new Error('execution reverted')), false, 'no ethers code, no verdict');
 });

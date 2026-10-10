@@ -177,6 +177,9 @@
               wrong_sender: 'This purchase was opened for a different wallet.',
               bad_signature: 'The signature did not match; try again.',
               authorization_used: 'That authorization was already used.',
+              // USDC refused the signed transfer. Paying the plain way could
+              // pay twice if the authorization already went through, so stop.
+              send_reverted: 'USDC refused that transfer, so nothing was sent. Reload the page to check the purchase before paying again.',
             };
             if (why[d.reason]) throw new Error(why[d.reason]);
             // relayer_dry, relayer_busy, send_failed, disabled: the store cannot pay the fee right now.

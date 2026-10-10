@@ -103,10 +103,26 @@ class Relayer {
       this.log(`relayed: ${purchase.sku} ${purchase.publicId} from ${message.from} tx ${txHash}`);
       return { ok: true, txHash };
     } catch (e) {
-      this.log(`relay failed: ${purchase.publicId}: ${e.shortMessage || e.message}`);
-      return { ok: false, reason: 'send_failed', detail: String(e.shortMessage || e.message).slice(0, 200) };
+      const reverted = isRevert(e);
+      this.log(`relay ${reverted ? 'reverted' : 'failed'}: ${purchase.publicId}: ${e.shortMessage || e.message}`);
+      // A revert is USDC refusing this authorization (a spent or cancelled
+      // nonce, a blacklisted or paused token, a bad signature): sending it again
+      // gets the same answer, so it is the caller's, not a 503 to retry.
+      return { ok: false, reason: reverted ? 'send_reverted' : 'send_failed', detail: String(e.shortMessage || e.message).slice(0, 200) };
     }
   }
 }
 
-module.exports = { Relayer, ethersChain, USDC_ABI };
+/** True when the chain itself refused the call (ethers v6 CALL_EXCEPTION with
+ *  revert data or an "execution reverted" message), as opposed to a provider,
+ *  network or relayer-key failure. A CALL_EXCEPTION with no revert data
+ *  ("missing revert data") is ambiguous, since some RPCs answer that way when
+ *  they fail, so it stays ours. */
+function isRevert(e) {
+  if (!e || e.code !== 'CALL_EXCEPTION') return false;
+  if (e.data && e.data !== '0x') return true;
+  if (e.reason) return true;
+  return /execution reverted/i.test(String(e.shortMessage || e.message || ''));
+}
+
+module.exports = { Relayer, ethersChain, USDC_ABI, isRevert };
