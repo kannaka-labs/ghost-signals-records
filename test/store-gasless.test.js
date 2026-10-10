@@ -146,6 +146,7 @@ test('end to end: open, sign, relay, settle, download; a second signature cannot
   t.after(async () => { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); });
   const base = `http://127.0.0.1:${server.address().port}`;
   const store = server.store;
+  store.stop(); // the test calls scan() itself; the timer's 2 s tick could otherwise race it
   store.rpc = chain.rpc;
   const adm = { authorization: 'Bearer adm' };
   assert.equal((await api(base, '/admin/releases', album(path.join(tmp, 'src')), adm)).status, 200);
@@ -244,7 +245,7 @@ test('end to end: a relay that fails frees the slot; a dry float turns the terms
   assert.equal(g.typedData.message.from, '0x0000000000000000000000000000000000000000', 'an unnamed buyer fills in their own address');
   chain.failSend = true;
   const failed = await api(base, `/api/purchase/${pid}/authorize`, { from: buyer.address, signature: await signTerms(buyer, g) });
-  assert.equal(failed.status, 409);
+  assert.equal(failed.status, 503, 'a send that failed on our side is not the buyer\'s to fix');
   assert.equal(failed.json.reason, 'send_failed');
   chain.failSend = false;
   const retry = await api(base, `/api/purchase/${pid}/authorize`, { from: buyer.address, signature: await signTerms(buyer, g) });
