@@ -190,7 +190,7 @@ async function main(opts = {}) {
         const purchase = await store.purchase(m[1]);
         if (!purchase) return send(res, 404, { error: 'not found' });
         const body = await readJson(req, 2 * 1024);
-        const r = await store.claimTx(purchase, body.hash);
+        const r = await store.claimTx(purchase, body.hash, { signature: typeof body.signature === 'string' ? body.signature : undefined });
         const fresh = await store.purchase(m[1]);
         return send(res, r.ok ? 200 : 409, { ...r, purchase: publicPurchase(fresh, store, cfg) });
       }
@@ -247,11 +247,12 @@ async function main(opts = {}) {
             `GET ${cfg.publicUrl}/api/store and pick a sku.`,
             `POST ${cfg.publicUrl}/api/store/<sku>/buy with JSON {"from": "<your wallet address>", "email": "<optional>"}; the 402 reply carries payment.payTo, payment.amountMicro, payment.asset (USDC on Base, chain 8453) and payment.calldata for the transfer.`,
             'Either send exactly that amount of USDC to payTo from the wallet you named (you pay the gas), or, with no ETH at all: sign payment.gasless.typedData (EIP-712, your address in message.from) with eth_signTypedData_v4 and POST {"from", "signature"} to payment.gasless.submitUrl; the store submits it and pays the gas. payment.gasless.enabled is false when the relayer is off or dry.',
-            `POST ${cfg.publicUrl}/api/purchase/<publicId>/tx with {"hash": "<tx hash>"}. If the purchase named your wallet ("from"), the store's chain watcher also settles it on its own; a purchase opened without "from" is settled only by this call, since the watcher cannot tell whose transfer it is.`,
+            `POST ${cfg.publicUrl}/api/purchase/<publicId>/tx with {"hash": "<tx hash>"}. If the purchase named your wallet ("from"), the store's chain watcher also settles it on its own; a purchase opened without "from" is settled only by this call, and only with proof that the transfer is yours: the first reply is a 409 with reason "payer_signature_required", payer (the transfer's sender) and message; sign message with personal_sign (EIP-191) from payer and POST {"hash", "signature"} again.`,
             `GET ${cfg.publicUrl}/api/purchase/<publicId>: when state is "paid", purchase.download is your zip (mp3s, cover art, README).`,
           ],
           rules: [
             'One transfer pays for one purchase. A transfer mined before the purchase was opened does not count.',
+            'A transfer hash is public, so a claim by hash alone proves nothing. Without a signature from the sender, /tx settles only what the watcher would: the earliest open purchase that named that wallet, for that amount. Any other claim (no wallet named, a later purchase naming the same wallet, a transfer the watcher already filed as unexplained) needs the payer\'s signature. A smart-contract wallet that cannot sign a plain message should be named with "from" when the purchase is opened. A payment sent from an exchange cannot be proven by the buyer: write to kannaka@spacechild.love with the purchase id and the hash.',
             'Downloads are for personal listening; see README.txt in the zip.',
             'Errors: a 4xx with {"error"} or {"ok": false, "reason"} is yours to fix (bad address, amount, signature or hash); a 503 means a provider or key on our side failed; a 429 carries retryAfterSec and a Retry-After header, per lane (checkout, claims, the ATM legs are throttled separately).',
             `The gasless authorization expires 30 minutes after it is issued; GET ${cfg.publicUrl}/api/purchase/<publicId> issues a fresh one while the purchase is still awaiting.`,

@@ -96,12 +96,15 @@
         return j;
       });
   }
-  function claim(hash) {
+  function claim(hash, signature) {
     say('Checking the chain…');
-    return fetch('/api/purchase/' + pid + '/tx', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hash: hash }) })
+    return fetch('/api/purchase/' + pid + '/tx', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ hash: hash, signature: signature || undefined }) })
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (d.ok) { if (d.purchase.state === 'paid') showBought(d.purchase); else say('Recorded.'); return; }
+        // A transfer hash is public, so the store asks the sending wallet to
+        // sign a short note saying the payment was for this purchase.
+        if (d.reason === 'payer_signature_required' && d.message && d.payer && !signature) return prove(hash, d);
         var words = {
           pending: 'Not mined yet. We keep watching; this page updates itself.',
           unconfirmed: 'Mined. Waiting for a few more blocks to make it final.',
@@ -114,12 +117,28 @@
           tx_failed: 'That transaction failed on the chain.',
           bad_hash: 'That is not a transaction hash.',
           no_transfer_to_us: 'No USDC transfer to the store is in that transaction.',
+          bad_signature: 'That signature did not come from the wallet that sent the payment.',
         };
         say(words[d.reason] || d.reason || 'That could not be checked.');
         // The watcher settles it on its own; the status poll will show it.
         // Ask again by hash only now and then, as a second route to the same answer.
         if (d.reason === 'pending' || d.reason === 'unconfirmed') { if (!pollTimer) pollTimer = setTimeout(poll, 6000); setTimeout(function () { claim(hash); }, 30000); }
       }).catch(function () { say('The chain could not be reached. Try again in a moment.'); });
+  }
+  function prove(hash, d) {
+    var eth = window.ethereum;
+    var cant = 'This purchase named no wallet, so the store needs the wallet that sent the payment (' + d.payer.slice(0, 8) + '…) to sign a short note. Open this page in that wallet, or, if you paid from an exchange, write to kannaka@spacechild.love with this page\'s link and the transaction hash.';
+    if (!eth) { say(cant); return; }
+    say('Found your payment. Sign the note in your wallet to show it was yours (no fee, nothing is sent).');
+    var hex = '0x' + Array.prototype.map.call(new TextEncoder().encode(d.message), function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+    return eth.request({ method: 'eth_requestAccounts' })
+      .then(function (accts) {
+        var mine = (accts || []).some(function (a) { return String(a).toLowerCase() === d.payer; });
+        if (!mine) throw new Error(cant);
+        return eth.request({ method: 'personal_sign', params: [hex, d.payer] });
+      })
+      .then(function (sig) { return claim(hash, sig); })
+      .catch(function (e) { say(e && e.code === 4001 ? 'Cancelled in the wallet.' : (e && e.message) || cant); });
   }
 
   $('pay-wallet').addEventListener('click', function () {

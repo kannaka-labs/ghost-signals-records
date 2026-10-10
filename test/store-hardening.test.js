@@ -1,7 +1,8 @@
 'use strict';
-// Defects found while documenting the store (2026-10-09), each pinned by
+// Four defects found while documenting the store (2026-10-09), each pinned by
 // a test that fails on the code before the fix:
 //   1. the throttle keyed on the caller-controlled FIRST X-Forwarded-For entry;
+//   2. a transfer could be claimed by hash for a purchase that did not pay it;
 //   3. /authorize answered 409 for the relayer's own failures;
 //   4. the admin bearer was compared with a plain string compare.
 const test = require('node:test');
@@ -114,6 +115,80 @@ test('clientIp: the proxy\'s last entry from loopback; the socket from anyone el
   assert.equal(index.clientIp(req('127.0.0.1')), '127.0.0.1', 'no proxy header: the socket');
   assert.equal(index.clientIp(req('198.51.100.4', '6.6.6.6')), '198.51.100.4', 'a direct caller cannot name itself');
   assert.equal(index.clientIp(req('198.51.100.4', '6.6.6.6, 7.7.7.7')), '198.51.100.4');
+});
+
+// ---- 2. claims by hash ----------------------------------------------------------
+test('claims: a hash alone cannot take another buyer\'s transfer; a signature from the sender can', async (t) => {
+  const chain = fakeChain();
+  const { server, base } = await start(t, {});
+  const store = server.store;
+  store.stop(); // this test runs the watcher itself, so it decides who gets there first
+  store.rpc = chain.rpc;
+  assert.equal((await api(base, '/admin/releases', album(path.join(tmp, 'src-claims')), ADM)).status, 200);
+  await store.scan(); // the watermark
+
+  // A buyer names their wallet and pays.
+  const victim = ethers.Wallet.createRandom();
+  const vBuy = await api(base, '/api/store/hardening-record/buy', { from: victim.address });
+  const vPid = vBuy.json.purchase.publicId;
+  const vHash = chain.transfer({ from: victim.address, block: 1001 });
+  chain.head = 1010;
+
+  // An attacker who saw the transfer on the chain opens a purchase without a
+  // wallet and claims it by hash. Before the fix this paid the attacker's
+  // purchase and the buyer got transfer_already_used.
+  const attacker = ethers.Wallet.createRandom();
+  const xBuy = await api(base, '/api/store/hardening-record/buy', {});
+  const xPid = xBuy.json.purchase.publicId;
+  const steal = await api(base, `/api/purchase/${xPid}/tx`, { hash: vHash });
+  assert.equal(steal.status, 409, steal.text);
+  assert.equal(steal.json.reason, 'payer_signature_required');
+  assert.equal(steal.json.purchase.state, 'awaiting');
+  // Signing with their own key does not help: the signer must be the sender.
+  const forged = await api(base, `/api/purchase/${xPid}/tx`, { hash: vHash, signature: await attacker.signMessage(core.claimMessage(xPid, vHash)) });
+  assert.equal(forged.json.reason, 'bad_signature');
+  assert.equal(forged.json.purchase.state, 'awaiting');
+  // A signature the victim made for their own purchase does not carry over.
+  const replay = await api(base, `/api/purchase/${xPid}/tx`, { hash: vHash, signature: await victim.signMessage(core.claimMessage(vPid, vHash)) });
+  assert.equal(replay.json.reason, 'bad_signature');
+  // Naming the victim's wallet on a later purchase does not jump the queue.
+  const yBuy = await api(base, '/api/store/hardening-record/buy', { from: victim.address });
+  const named = await api(base, `/api/purchase/${yBuy.json.purchase.publicId}/tx`, { hash: vHash });
+  assert.equal(named.json.reason, 'payer_signature_required');
+  assert.equal(named.json.purchase.state, 'awaiting');
+
+  // The buyer's own claim by hash still settles (their purchase is the one
+  // the watcher would pick), and the watcher then has nothing left to do.
+  const mine = await api(base, `/api/purchase/${vPid}/tx`, { hash: vHash });
+  assert.equal(mine.status, 200, mine.text);
+  assert.equal(mine.json.purchase.state, 'paid');
+  assert.equal((await api(base, `/api/purchase/${xPid}/tx`, { hash: vHash })).json.reason, 'transfer_already_used');
+
+  // An honest buyer with no wallet named proves the transfer and is paid.
+  const walkIn = ethers.Wallet.createRandom();
+  const wBuy = await api(base, '/api/store/hardening-record/buy', {});
+  const wPid = wBuy.json.purchase.publicId;
+  const wHash = chain.transfer({ from: walkIn.address, block: 1011 });
+  chain.head = 1020;
+  const ask = await api(base, `/api/purchase/${wPid}/tx`, { hash: wHash });
+  assert.equal(ask.json.reason, 'payer_signature_required');
+  assert.equal(ask.json.payer, walkIn.address.toLowerCase());
+  const proven = await api(base, `/api/purchase/${wPid}/tx`, { hash: wHash, signature: await walkIn.signMessage(ask.json.message) });
+  assert.equal(proven.status, 200, proven.text);
+  assert.equal(proven.json.purchase.state, 'paid');
+  assert.equal(proven.json.purchase.from, walkIn.address.toLowerCase());
+
+  // A transfer the watcher filed as unexplained is not taken by a purchase
+  // that names its sender afterwards without proof.
+  const exch = ethers.Wallet.createRandom();
+  const sHash = chain.transfer({ from: exch.address, block: 1021 });
+  chain.head = 1030;
+  await store.scan();
+  assert.equal((await store.unmatched()).length, 1);
+  const zBuy = await api(base, '/api/store/hardening-record/buy', { from: exch.address });
+  const late = await api(base, `/api/purchase/${zBuy.json.purchase.publicId}/tx`, { hash: sHash });
+  assert.equal(late.json.reason, 'payer_signature_required');
+  assert.equal((await store.unmatched()).length, 1, 'still on the books for its real owner');
 });
 
 // ---- 3. /authorize status codes -------------------------------------------------

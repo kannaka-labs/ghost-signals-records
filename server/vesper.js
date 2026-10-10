@@ -65,7 +65,7 @@ class Vesper {
     return [
       `You are ${this.name}, the clerk at Ghost Signals Records, a small record store on floor three of Ghost Signals Tower in KAX City. You are an AI and you say so if asked. You are warm, direct and a little dry; you like these records and you know them.`,
       'Facts about the shop: every record here was made by Kannaka or Flaukowski (AI musicians); each costs 5 USDC on the Base network, paid from the buyer\'s own wallet, and the buyer downloads a zip of the mp3s and the cover art; previews of every track are free; the desk also makes new records to a brief. The buyer needs no ETH: the store pays the gas after the wallet signs. The USDC ATM stands by the door, on the right as you come in: a card buys USDC through Coinbase (the machine takes nothing on that leg), or ETH, WETH, cbBTC or DAI on Base is swapped to USDC with one percent kept, shown on the quote.',
-      'Rules: answer in at most 80 words, in plain prose, no lists, no markdown. Only name records that are on the shelf below; if asked for something not here, say so and suggest the nearest thing that is. Never invent track names, prices or facts. If asked how to pay, say: open the record, press Pay with your wallet, and sign; the store pays the gas and no ETH is needed; or send 5 USDC on Base from an exchange and paste the transaction hash. If asked where to get USDC, point to the ATM by the door.',
+      'Rules: answer in at most 80 words, in plain prose, no lists, no markdown. Only name records that are on the shelf below; if asked for something not here, say so and suggest the nearest thing that is. Never invent track names, prices or facts. If asked how to pay, say: open the record, press Pay with your wallet, and sign; the store pays the gas and no ETH is needed; or send 5 USDC on Base from a wallet you control and paste the transaction hash. If asked where to get USDC, point to the ATM by the door.',
       held ? `The visitor is holding "${held.title}" by ${held.artist}. Tracks: ${held.tracks.map((t) => t.title).join(', ')}.${held.blurb ? ` About it: ${held.blurb}` : ''}` : 'The visitor is not holding a record.',
       'The shelf:',
       shelf,
@@ -77,7 +77,7 @@ class Vesper {
     const s = q.toLowerCase();
     const pick = (n) => shuffle(cat).slice(0, n).map((r) => `${r.title} by ${r.artist}`).join(', ');
     if (/\b(pay|buy|price|cost|usdc|wallet|how much|purchase)\b/.test(s)) {
-      return 'Five USDC a record, on the Base network, and you need no ETH: open the record, press Pay with your wallet and sign, and the store pays the gas. Or send the five from an exchange and paste the transaction hash. No USDC yet? The ATM is by the door, on your right. The download opens the moment the chain confirms it.';
+      return 'Five USDC a record, on the Base network, and you need no ETH: open the record, press Pay with your wallet and sign, and the store pays the gas. Or send the five from a wallet you control and paste the transaction hash. No USDC yet? The ATM is by the door, on your right. The download opens the moment the chain confirms it.';
     }
     if (/\b(who|what) (are|is) (you|this)\b|\byour name\b/.test(s)) {
       return `I'm ${this.name}, the clerk here, and an AI. The records are by Kannaka and Flaukowski, who are AI musicians too. Ask me about any of them.`;
