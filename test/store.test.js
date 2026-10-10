@@ -20,13 +20,16 @@ process.env.GSR_FFMPEG = ''; // no previews in tests
 process.env.GSR_USDC_SCAN_MS = '3600000'; // the tests call scan() themselves
 process.env.GSR_BASE_RPC_URLS = 'http://127.0.0.1:9/'; // nothing listens: the real chain is never asked
 
+const { ethers } = require('ethers');
 const core = require('../server/store-core');
 const { writeZip, listZip, crc32 } = require('../server/zip');
 const { main } = require('../server/index');
 
 const PAY_TO = '0x571d2c659bd01688e2d7aa1c9658445a1da9c2cd';
 const BUYER = '0x1111111111111111111111111111111111111111';
-const OTHER = '0x2222222222222222222222222222222222222222';
+// A wallet with a key, so it can prove a transfer was its own.
+const OTHER_W = new ethers.Wallet(`0x${'22'.repeat(32)}`);
+const OTHER = OTHER_W.address.toLowerCase();
 
 /** A chain in a box: a head block, and logs by block. */
 function fakeChain() {
@@ -217,7 +220,8 @@ test('the store end to end: publish, buy, pay on the chain, download; a transfer
   assert.equal(scan.matched, 0);
   assert.equal((await api(base, `/api/purchase/${pid2}`)).json.purchase.state, 'awaiting');
 
-  // A buyer who named no wallet pays from an exchange and hands us the hash.
+  // A buyer who named no wallet pays and hands us the hash, then proves the
+  // transfer was theirs by signing the message the store hands back.
   const buy3 = await api(base, '/api/store/test-record/buy', {});
   const pid3 = buy3.json.purchase.publicId;
   const h3 = chain.transfer({ from: OTHER, block: 1031 });
@@ -226,8 +230,14 @@ test('the store end to end: publish, buy, pay on the chain, download; a transfer
   assert.equal(c3.json.reason, 'unconfirmed');
   chain.head = 1040;
   c3 = await api(base, `/api/purchase/${pid3}/tx`, { hash: h3 });
+  assert.equal(c3.status, 409, c3.text);
+  assert.equal(c3.json.reason, 'payer_signature_required');
+  assert.equal(c3.json.payer, OTHER);
+  assert.equal(c3.json.message, core.claimMessage(pid3, h3));
+  c3 = await api(base, `/api/purchase/${pid3}/tx`, { hash: h3, signature: await OTHER_W.signMessage(c3.json.message) });
   assert.equal(c3.status, 200, c3.text);
   assert.equal(c3.json.purchase.state, 'paid');
+  assert.equal(c3.json.purchase.from, OTHER, 'the proven sender is recorded as the payer');
   // The two strays are still unexplained: different transfers.
   assert.equal((await api(base, '/admin/purchases', undefined, adm)).json.unmatched.length, 2);
   // The watcher now reaches h3 too; it is already used, so nothing changes.
@@ -235,9 +245,10 @@ test('the store end to end: publish, buy, pay on the chain, download; a transfer
   assert.equal(scan.matched, 0);
 
   // A stray the watcher filed first is attached to the purchase that claims
-  // it, once: the exchange paid before the buyer opened the page.
+  // it with the sender's signature, once.
   const buy4 = await api(base, '/api/store/test-record/buy', {});
-  const c4 = await api(base, `/api/purchase/${buy4.json.purchase.publicId}/tx`, { hash: strayHash });
+  const pid4 = buy4.json.purchase.publicId;
+  const c4 = await api(base, `/api/purchase/${pid4}/tx`, { hash: strayHash, signature: await OTHER_W.signMessage(core.claimMessage(pid4, strayHash)) });
   assert.equal(c4.status, 200, c4.text);
   assert.equal(c4.json.purchase.state, 'paid');
   assert.equal((await api(base, '/admin/purchases', undefined, adm)).json.unmatched.length, 1, 'the stray is explained now');

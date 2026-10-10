@@ -266,7 +266,7 @@ class Store {
 
   /** The buyer (or their page) hands us the hash of the transfer they sent. We
    *  read the receipt ourselves; the hash is only a pointer. */
-  async claimTx(purchase, txHash) {
+  async claimTx(purchase, txHash, { signature } = {}) {
     if (!core.isTxHash(txHash)) return { ok: false, reason: 'bad_hash' };
     if (purchase.state !== 'awaiting') return { ok: true, already: true, state: purchase.state };
     const receipt = await this.rpc('eth_getTransactionReceipt', [txHash.toLowerCase()]);
@@ -274,14 +274,43 @@ class Store {
     if (receipt.status !== '0x1') return { ok: false, reason: 'tx_failed' };
     const head = parseInt(await this.rpc('eth_blockNumber', []), 16);
     const reasons = [];
+    let refused = null;
     for (const log of receipt.logs || []) {
       const t = core.parseTransferLog(log);
       if (!t) continue;
-      const m = core.matchTransfer(purchase, t, { payTo: this.s.payTo, headBlock: head, confirmations: this.s.confirmations });
+      const opts = { payTo: this.s.payTo, headBlock: head, confirmations: this.s.confirmations };
+      const m = core.matchTransfer(purchase, t, opts);
       if (!m.ok) { reasons.push(m.reason); continue; }
+      const proof = await this._claimProof(purchase, t, signature, opts);
+      if (!proof.ok) { refused = refused || proof; continue; }
       return this.settle(purchase, t);
     }
+    if (refused) return refused;
     return { ok: false, reason: reasons.includes('unconfirmed') ? 'unconfirmed' : reasons[0] || 'no_transfer_to_us' };
+  }
+
+  /**
+   * May this claim take this transfer? The hash is public, so on its own it
+   * proves nothing: until 2026-10-09 anyone could open a purchase without a
+   * wallet (or naming someone else's) and claim another buyer's transfer by
+   * hash before the watcher settled it, leaving the real buyer with
+   * transfer_already_used. A hash alone now settles only what the watcher
+   * itself would: the earliest open purchase that named the sender, for a
+   * transfer not already filed as unexplained. Anything else needs the
+   * sender's signature over core.claimMessage(publicId, hash).
+   */
+  async _claimProof(purchase, t, signature, opts) {
+    const used = await this.db.get('SELECT order_id, kind FROM ledger WHERE key=?', [core.ledgerKey(t)]);
+    if (used && used.kind !== 'unmatched') return used.order_id === purchase.id ? { ok: true } : { ok: false, reason: 'transfer_already_used' };
+    if (signature) {
+      return core.claimSigner(purchase.publicId, t.txHash, signature) === t.from ? { ok: true } : { ok: false, reason: 'bad_signature' };
+    }
+    if (purchase.fromAddr && !used) {
+      const candidates = (await this.db.all('SELECT * FROM purchases WHERE state=? AND amount_micro=? AND from_addr=? ORDER BY created_at ASC', ['awaiting', Number(t.micro), t.from])).map(hydratePurchase);
+      const first = candidates.find((c) => core.matchTransfer(c, t, opts).ok);
+      if (first && first.id === purchase.id) return { ok: true };
+    }
+    return { ok: false, reason: 'payer_signature_required', payer: t.from, message: core.claimMessage(purchase.publicId, t.txHash) };
   }
 
   /** Record the payment exactly once and open the download. */

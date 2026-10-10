@@ -133,6 +133,22 @@ function checkAuthorization(purchase, payTo, auth, nowSec = Math.floor(Date.now(
   }
 }
 
+// ---- proof that a transfer is the claimant's -------------------------------
+// A tx hash is public: anyone watching the store's address sees it. A claim by
+// hash for a purchase that named no wallet (or one the watcher would not give
+// the transfer to) must carry the sender's EIP-191 signature over this text,
+// which binds the purchase and the transaction so it cannot be reused.
+function claimMessage(publicId, txHash) {
+  return `Ghost Signals Records: I sent the payment for purchase ${publicId} in transaction ${String(txHash).toLowerCase()}.`;
+}
+/** The address that signed claimMessage(publicId, txHash), or null. */
+function claimSigner(publicId, txHash, signature) {
+  try {
+    const { ethers } = require('ethers');
+    return normAddr(ethers.verifyMessage(claimMessage(publicId, txHash), signature));
+  } catch { return null; }
+}
+
 function toChecksum(a) { const { ethers } = require('ethers'); return ethers.getAddress(normAddr(a)); }
 
 // ---- download tokens: HMAC over (purchase, expiry), base64url, no state --
@@ -184,4 +200,5 @@ module.exports = {
   isAddress, normAddr, isTxHash, isBytes32, addrTopic, topicAddr, microToUsdc, transferCalldata,
   parseTransferLog, matchTransfer, ledgerKey, signDownload, verifyDownload, slug, readmeText,
   authMessage, authTypedData, checkAuthorization, toChecksum, ZERO_ADDRESS,
+  claimMessage, claimSigner,
 };
