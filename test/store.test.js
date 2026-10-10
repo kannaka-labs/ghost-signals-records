@@ -130,6 +130,9 @@ test('the store end to end: publish, buy, pay on the chain, download; a transfer
   // Links in responses carry the site's public origin; here they point home.
   const local = (u) => { const x = new URL(u); return base + x.pathname + x.search; };
   const store = server.store;
+  // The tests call scan() themselves; the timer's first tick (2 s in) could
+  // otherwise land mid-test and answer a test's scan() with { scanned: 0 }.
+  store.stop();
   const chain = fakeChain();
   store.rpc = chain.rpc;
   const adm = { authorization: 'Bearer adm' };

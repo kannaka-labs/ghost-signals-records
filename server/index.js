@@ -65,11 +65,40 @@ function throttle(ip, capacity = 30, lane = 'desk', perMs = 60000) {
   b.tokens -= 1; buckets.set(key, b); return 0;
 }
 function allow(ip, capacity = 30, lane = 'desk', perMs = 60000) { return throttle(ip, capacity, lane, perMs) === 0; }
+// Who is calling, for the throttle and the onramp's clientIp. The studio
+// binds to loopback behind nginx, which APPENDS the peer it saw to
+// X-Forwarded-For ($proxy_add_x_forwarded_for). Everything before that last
+// entry is whatever the caller sent, so until 2026-10-09 (reading the FIRST
+// entry) a caller could name a fresh "IP" per request and never be throttled.
+// Trust the header only from a loopback peer (our proxy), and only its last
+// entry; from anyone else the socket address is the answer.
+function isLoopback(a) { return /^(?:::ffff:)?127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(a) || a === '::1'; }
+function clientIp(req) {
+  const sock = (req.socket && req.socket.remoteAddress) || '';
+  const xff = req.headers['x-forwarded-for'];
+  if (!isLoopback(sock) || !xff) return sock;
+  const hops = String(xff).split(',').map((s) => s.trim()).filter(Boolean);
+  return hops.length ? hops[hops.length - 1] : sock;
+}
+// The admin bearer, compared in constant time. Both sides are hashed first so
+// the comparison is always 32 bytes against 32 bytes: no early exit on the
+// first differing byte, no length leak, no throw on unequal lengths.
+function sameSecret(a, b) {
+  const h = (s) => crypto.createHash('sha256').update(String(s), 'utf8').digest();
+  return crypto.timingSafeEqual(h(a), h(b));
+}
 function slow(res, wait) { return send(res, 429, { error: 'slow down', retryAfterSec: wait }, undefined, { 'retry-after': String(wait) }); }
 // Reasons the visitor caused (a 400), as opposed to a provider or key that
 // failed (a 503). A client error dressed as a 503 tells an agent to retry
 // something that will never work.
-const CLIENT_REASONS = new Set(['bad_address', 'bad_amount', 'bad_taker', 'unknown_token']);
+// The gasless relay's own client reasons (a signature, an address, a spent or
+// expired authorization, a wallet without the USDC) join them; anything else
+// from the relay path (relayer_dry, relayer_busy, send_failed, disabled,
+// no_relayer, "rpc: ...") is ours and answers 503.
+const CLIENT_REASONS = new Set(['bad_address', 'bad_amount', 'bad_taker', 'unknown_token',
+  'not_awaiting', 'no_authorization_issued', 'bad_from', 'wrong_sender', 'expired', 'bad_signature', 'insufficient_usdc', 'authorization_used']);
+// How long a caller should wait before trying the relayer again.
+const RELAY_RETRY_SEC = { relayer_busy: 60, relayer_dry: 600 };
 
 async function main(opts = {}) {
   const db = await new Db(path.join(cfg.dataDir, 'records.sqlite')).open();
@@ -87,7 +116,7 @@ async function main(opts = {}) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     const p = url.pathname;
-    const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+    const ip = clientIp(req);
     let m;
     try {
       // ---- health + catalog ------------------------------------------
@@ -149,7 +178,12 @@ async function main(opts = {}) {
         const auth = { from: typeof body.from === 'string' ? body.from : '', signature: typeof body.signature === 'string' ? body.signature : undefined, v: body.v, r: body.r, s: body.s };
         const r = await store.relay(purchase, auth);
         const fresh = await store.purchase(m[1]);
-        return send(res, r.ok ? 200 : 409, { ...r, purchase: publicPurchase(fresh, store, cfg) });
+        // A refusal the caller can fix is a 409; a relayer that is off, dry,
+        // busy or could not reach the chain is ours, a 503 (until 2026-10-09
+        // every refusal was a 409, which the guide reads as "yours to fix").
+        const status = r.ok ? 200 : CLIENT_REASONS.has(r.reason) ? 409 : 503;
+        const wait = !r.ok && RELAY_RETRY_SEC[r.reason];
+        return send(res, status, { ...r, purchase: publicPurchase(fresh, store, cfg) }, undefined, wait ? { 'retry-after': String(wait) } : {});
       }
       if ((m = /^\/api\/purchase\/([A-Za-z0-9_-]{16,32})\/tx$/.exec(p)) && req.method === 'POST') {
         { const w = throttle(ip, 40, 'claim'); if (w) return slow(res, w); }
@@ -394,7 +428,7 @@ async function main(opts = {}) {
       // ---- admin (bearer ADMIN token) ----------------------------------------
       if (p.startsWith('/admin/')) {
         const auth = req.headers.authorization || '';
-        if (!cfg.adminToken || auth !== `Bearer ${cfg.adminToken}`) return send(res, cfg.adminToken ? 401 : 503, { error: cfg.adminToken ? 'unauthorized' : 'admin token not set' });
+        if (!cfg.adminToken || !sameSecret(auth, `Bearer ${cfg.adminToken}`)) return send(res, cfg.adminToken ? 401 : 503, { error: cfg.adminToken ? 'unauthorized' : 'admin token not set' });
         if (p === '/admin/orders' && req.method === 'GET') return send(res, 200, { orders: await orders.recent(100) });
         // The gasless relayer: its address and float, and whether it will relay now.
         if (p === '/admin/relayer' && req.method === 'GET') return send(res, 200, relayer.enabled() ? await relayer.status() : { enabled: false, reason: 'no_key' });
@@ -511,4 +545,4 @@ function publicPurchase(p, store, cfg) {
 
 if (require.main === module) main().catch((e) => { log(`fatal: ${e.stack || e.message}`); process.exit(1); });
 
-module.exports = { main, allow, throttle, CLIENT_REASONS };
+module.exports = { main, allow, throttle, clientIp, CLIENT_REASONS };
