@@ -55,7 +55,7 @@ function fakeChain() {
     async balanceOf() { return 10n ** 9n; },
     async authorizationState(addr, nonce) { return chain.used.has(`${addr.toLowerCase()}:${nonce}`); },
     async send(a) {
-      if (chain.failSend) throw new Error('execution reverted');
+      if (chain.failSend) throw Object.assign(new Error('request timeout'), { code: 'TIMEOUT' });
       chain.used.add(`${a.from.toLowerCase()}:${a.nonce}`);
       chain.head += 1;
       return chain.transfer({ from: a.from.toLowerCase(), micro: a.value, block: chain.head });

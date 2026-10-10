@@ -92,13 +92,15 @@ function slow(res, wait) { return send(res, 429, { error: 'slow down', retryAfte
 // failed (a 503). A client error dressed as a 503 tells an agent to retry
 // something that will never work.
 // The gasless relay's own client reasons (a signature, an address, a spent or
-// expired authorization, a wallet without the USDC) join them; anything else
-// from the relay path (relayer_dry, relayer_busy, send_failed, disabled,
-// no_relayer, "rpc: ...") is ours and answers 503.
+// expired authorization, a wallet without the USDC, an authorization USDC
+// itself reverted) join them; anything else from the relay path (relayer_dry,
+// relayer_busy, send_failed, disabled, no_relayer, "rpc: ...") is ours and
+// answers 503.
 const CLIENT_REASONS = new Set(['bad_address', 'bad_amount', 'bad_taker', 'unknown_token',
-  'not_awaiting', 'no_authorization_issued', 'bad_from', 'wrong_sender', 'expired', 'bad_signature', 'insufficient_usdc', 'authorization_used']);
+  'not_awaiting', 'no_authorization_issued', 'bad_from', 'wrong_sender', 'expired', 'bad_signature', 'insufficient_usdc', 'authorization_used',
+  'send_reverted']);
 // How long a caller should wait before trying the relayer again.
-const RELAY_RETRY_SEC = { relayer_busy: 60, relayer_dry: 600 };
+const RELAY_RETRY_SEC = { relayer_busy: 60, relayer_dry: 600, send_failed: 30 };
 
 async function main(opts = {}) {
   const db = await new Db(path.join(cfg.dataDir, 'records.sqlite')).open();
@@ -253,7 +255,7 @@ async function main(opts = {}) {
           rules: [
             'One transfer pays for one purchase. A transfer mined before the purchase was opened does not count.',
             'Downloads are for personal listening; see README.txt in the zip.',
-            'Errors: a 4xx with {"error"} or {"ok": false, "reason"} is yours to fix (bad address, amount, signature or hash); a 503 means a provider or key on our side failed; a 429 carries retryAfterSec and a Retry-After header, per lane (checkout, claims, the ATM legs are throttled separately).',
+            'Errors: a 4xx with {"error"} or {"ok": false, "reason"} is yours to fix (bad address, amount, signature or hash); a 503 means a provider or key on our side failed, and on /authorize it carries a Retry-After header (send_reverted is a 409: USDC refused that authorization, so sign a fresh one rather than resend it); a 429 carries retryAfterSec and a Retry-After header, per lane (checkout, claims, the ATM legs are throttled separately).',
             `The gasless authorization expires 30 minutes after it is issued; GET ${cfg.publicUrl}/api/purchase/<publicId> issues a fresh one while the purchase is still awaiting.`,
             'Name your wallet when you open the purchase. Without "from", payment.gasless.payer is null and typedData.message.from is the zero address as a placeholder: replace it with your own address before signing, and the signer becomes the payer. The zero address itself is refused as a wallet.',
             'Unknown ids under /api/ answer 404 with {"error": "not found"}; a purchase id is 16 to 32 URL-safe characters.',
