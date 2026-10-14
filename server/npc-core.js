@@ -92,6 +92,35 @@ function line(state, ctx) {
   }
 }
 
+/** The style line for an instrumental brief: every vocal phrase removed and
+ *  the fact stated, so the brief, the page and the generator agree. Pure. */
+const VOCAL_TERMS = /\b(?:(?:restrained|layered|soft|breathy|big|lush|male|female|whispered|spoken|choral|gang)\s+)*(?:vocals?|vocalist|singer|singing|voice|choir|chorus vocals?|harmonies|harmony vocals?|rap|rapping|lyrics?)\b/gi;
+/** Drop joining words left dangling once the vocal phrase between them is gone
+ *  ("drones with whispered vocals and soft choir" -> "drones"). */
+const CONNECTOR = '(?:with|and|plus|featuring|feat\\.?|over|under|behind|beneath)';
+function stripConnectors(part) {
+  let s = String(part).replace(/\s+/g, ' ').trim();
+  for (;;) {
+    const next = s
+      .replace(new RegExp('^' + CONNECTOR + '\\b\\s*', 'i'), '')
+      .replace(new RegExp('\\s*\\b' + CONNECTOR + '$', 'i'), '')
+      .replace(new RegExp('\\b' + CONNECTOR + '\\s+(?=' + CONNECTOR + '\\b)', 'gi'), '')
+      .trim();
+    if (next === s) return s;
+    s = next;
+  }
+}
+
+function instrumentalStyle(style) {
+  const kept = String(style || '')
+    .split(/\s*,\s*/)
+    .map((part) => stripConnectors(part.replace(VOCAL_TERMS, '')))
+    .filter((part) => part && !/^(?:with|and|no|a|an|the)$/i.test(part));
+  const base = kept.join(', ');
+  if (/\binstrumental\b/i.test(base)) return base;
+  return base ? `${base}, instrumental, no vocals` : 'instrumental, no vocals';
+}
+
 /** Advance the conversation with the visitor's text. Returns
  *  { state, reply, needs } where `needs` names a side effect the caller may
  *  perform before replying: 'propose_album_titles', 'propose_track_titles',
@@ -118,8 +147,12 @@ function advance(state, text, ctx) {
       if (style.length < 8) { note = 'Give me instruments, tempo, mood. Or pick from the list.'; break; }
       const risks = properNounRisk(style);
       if (risks.length) { note = `That names what sounds like an artist (${risks[0]}). The studio will refuse it. Tell me what they sound like instead: instruments, tempo, era, mood.`; break; }
-      b.style = style.slice(0, LIMITS.style);
-      b.instrumental = /\binstrumental\b|\bno vocals?\b/i.test(t);
+      b.instrumental = /\binstrumental\b|\bno (?:vocals?|singing|voice)\b/i.test(t);
+      // A palette preset carries its own vocal line ("restrained female
+      // vocal"); copied as is, it contradicted a brief that asked for no
+      // vocals (outside audit 2026-10-14, F1). The brief is what the buyer
+      // wrote, so an instrumental brief's style line says so and names no voice.
+      b.style = (b.instrumental ? instrumentalStyle(style) : style).slice(0, LIMITS.style);
       s.step = 'size';
       break;
     }
@@ -200,4 +233,4 @@ function advance(state, text, ctx) {
   return { state: s, reply: reply.trim(), needs };
 }
 
-module.exports = { STEPS, fresh, advance, line, parseTitles };
+module.exports = { STEPS, fresh, advance, line, parseTitles, instrumentalStyle };
