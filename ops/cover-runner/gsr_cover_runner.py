@@ -18,7 +18,7 @@ the store's box, so everything goes over HTTPS: lease jobs, POST the PNGs back. 
        BILLING_START         the pod ran -> never fall back; gate and upload what is there
   5. per job: upload the first candidate that passes (>= 1024 px, >= 60 KB); a job with none
      -> /fail (an attempt); busy / no capacity / credits -> /release (no attempt)
-  6. heartbeat to Gatus (notice_gsr-cover-runner), with a reason when something needs a person
+  6. heartbeat to Gatus (page_gsr-cover-runner), with a reason when something needs a person
 
 Pod hygiene: qbraid_run.sh terminates only its own instance (EXIT trap) and never sweeps
 strays. This runner never kills it on a clock (a SIGKILL would skip that trap); flock stops
@@ -73,7 +73,7 @@ def settings():
         "profiles": [p for p in env("GSR_COVER_PROFILES", "gpu-rtx-4090,gpu-l4,gpu-a10").split(",") if p],
         "max_jobs": max(1, min(8, int(env("GSR_COVER_MAX_JOBS", "8")))),
         "min_bytes": int(env("GSR_COVER_MIN_BYTES", "60000")),
-        "gatus_key": env("GSR_COVER_GATUS_KEY", "notice_gsr-cover-runner"),
+        "gatus_key": env("GSR_COVER_GATUS_KEY", "page_gsr-cover-runner"),
         "gatus_url": env("GATUS_PUSH_URL", "https://staff.ninja-portal.com/gatus-push"),
         "gatus_token_file": env("GATUS_TOKEN_FILE", os.path.join(HOME, ".gatus-push.token")),
         "venv_python": env("QBRAID_PY", os.path.join(HOME, "qbraid-venv2", "bin", "python")),
