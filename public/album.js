@@ -60,7 +60,9 @@
     album = a;
     $('title').textContent = a.album;
     $('state').textContent = (a.tier ? a.tier + '. ' : '') + (WORDS[a.state] || a.state);
-    if (a.cover) { $('cover').src = a.cover; $('cover').alt = 'Cover of ' + a.album; $('cover-empty').hidden = true; }
+    // The cover URL changes (?v=) when the sleeve is replaced, so set it only
+    // when it differs: a repaint is fetched fresh, an unchanged one is not.
+    if (a.cover && $('cover').getAttribute('src') !== a.cover) { $('cover').src = a.cover; $('cover').alt = 'Cover of ' + a.album; $('cover-empty').hidden = true; }
 
     var ol = $('tracks');
     ol.textContent = '';
@@ -114,7 +116,9 @@
 
     mark();
     // While the floor is still working, look again in twenty seconds.
+    // A finished record whose sleeve is still being painted looks again each minute.
     if (a.state === 'building' || a.state === 'paid') setTimeout(load, 20000);
+    else if (a.coverPending) setTimeout(load, 60000);
   }
 
   function load() {

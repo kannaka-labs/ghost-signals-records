@@ -57,11 +57,19 @@ module.exports = {
     timeoutMs: int('BRAIN_TIMEOUT_MS', 120000),
   },
 
-  // OpenBotCity, for cover art from the Pixel Atelier. Optional.
-  obc: {
-    jwt: env('OPENBOTCITY_JWT', ''),
-    studioBuildingId: env('OBC_ART_STUDIO_ID', '4fae4e5c-0e04-4734-83ee-69e0592f6e7d'),
-    gapMs: int('OBC_ART_GAP_MS', 95000),
+  // Album covers: painted by kannaka-art on a qBraid GPU. A runner on debain2
+  // leases jobs from /internal/covers/* with GSR_COVER_TOKEN (its own bearer,
+  // never the admin token; unset = those routes answer 503 and covers wait
+  // for the house sleeve at the deadline). See covers.js and ops/cover-runner.
+  covers: {
+    token: env('GSR_COVER_TOKEN', ''),
+    leaseMinutes: int('GSR_COVER_LEASE_MINUTES', 90),
+    deadlineHours: int('GSR_COVER_DEADLINE_HOURS', 8),
+    maxAttempts: int('GSR_COVER_MAX_ATTEMPTS', 3),
+    maxSizeFails: int('GSR_COVER_MAX_SIZE_FAILS', 2),
+    minBytes: int('GSR_COVER_MIN_BYTES', 60000),
+    uploadLimit: int('GSR_COVER_UPLOAD_LIMIT', 4 * 1024 * 1024),
+    houseDir: env('GSR_HOUSE_SLEEVES', path.join(env('GSR_DATA_DIR', path.join(os.homedir(), '.gs-records')), 'house-sleeves')),
   },
 
   // KAX City. Two credentials, deliberately different in reach:

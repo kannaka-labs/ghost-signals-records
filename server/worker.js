@@ -1,8 +1,10 @@
 'use strict';
 // The studio floor: takes one paid order at a time and builds it, track by
 // track, resumable. Lyrics from the brain (or the template), the generator
-// for audio, the atelier for the cover, files under the order's directory,
-// then delivered and mailed. A track that the generator refuses for its
+// for audio, files under the order's directory, then delivered and mailed.
+// The cover is queued the moment the order is claimed (covers.js) and painted
+// on a GPU elsewhere while the tracks build; delivery never waits for it.
+// A track that the generator refuses for its
 // style gets one rewrite; a track that fails twice fails the order with a
 // reason the operator can read, and the retry is a state move.
 const fs = require('node:fs');
@@ -12,13 +14,13 @@ const { Db, now } = require('./db');
 const { Orders } = require('./orders');
 const { Suno, pickClip } = require('./suno');
 const { writeLyrics } = require('./lyrics');
-const { Atelier, coverPrompt, placeholderPng } = require('./art');
+const { Covers, orderDirFor } = require('./covers');
 const { smtpSend } = require('./mail');
 const { chat } = require('./brain');
 
 const log = (m) => console.log(`[worker ${new Date().toISOString()}] ${m}`);
 
-function orderDir(order) { return path.join(cfg.dataDir, 'orders', order.publicId); }
+function orderDir(order) { return orderDirFor(cfg, order.publicId); }
 
 function safeName(s) { return String(s).replace(/[^A-Za-z0-9 _.-]+/g, '').replace(/^[. _-]+/, '').trim().replace(/\s+/g, ' ').slice(0, 60) || 'track'; }
 
@@ -78,43 +80,38 @@ async function buildTrack(orders, suno, order, track, deps) {
   log(`track ${track.idx + 1}/${brief.trackTitles.length} done: ${path.basename(file)} (${Math.round(clip.duration)} s)`);
 }
 
-async function buildCover(order, atelier) {
-  const dir = orderDir(order);
-  const file = path.join(dir, 'cover.png');
-  if (fs.existsSync(file)) return 'kept';
-  if (!atelier) { fs.writeFileSync(file, placeholderPng()); return 'placeholder'; }
-  try {
-    const r = await atelier.generate({ prompt: coverPrompt(order.brief), description: `Cover for "${order.brief.albumTitle}", a Ghost Signals Records album. ${order.brief.theme.slice(0, 200)}`, file });
-    fs.writeFileSync(path.join(dir, 'cover.meta'), `${r.artifactId}|${r.url}`);
-    return 'atelier';
-  } catch (e) {
-    log(`cover: ${e.message}; placeholder`);
-    fs.writeFileSync(file, placeholderPng());
-    return 'placeholder';
-  }
+function coversFor(orders, deps) {
+  if (!deps.covers) deps.covers = new Covers(orders.db, cfg, { log });
+  return deps.covers;
 }
 
 async function buildOrder(orders, order, deps) {
   const dir = orderDir(order);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'brief.json'), JSON.stringify(order.brief, null, 2));
+  // Queue the cover first, so the GPU paints it while the tracks build. A
+  // rebuild re-claims the order; enqueue never resets a finished cover.
+  const covers = coversFor(orders, deps);
+  await covers.enqueue(order);
   const tracks = await orders.tracks(order.id);
   for (const t of tracks) await buildTrack(orders, deps.suno, order, t, deps);
-  const cover = await buildCover(order, deps.atelier);
+  // album.json names the file; whether it is painted yet lives in the queue
+  // and in cover.meta, which the web process updates without touching this.
   const manifest = {
-    album: order.brief.albumTitle, tier: order.tier, cover: 'cover.png', coverSource: cover,
+    album: order.brief.albumTitle, tier: order.tier, cover: 'cover.png',
     tracks: (await orders.tracks(order.id)).map((t) => ({ n: t.idx + 1, title: t.title, file: t.file, duration: t.duration_sec })),
     deliveredAt: now(),
   };
   fs.writeFileSync(path.join(dir, 'album.json'), JSON.stringify(manifest, null, 2));
-  return manifest;
+  return { ...manifest, coverSource: Covers.sourceOf(await covers.get(order.id)) };
 }
 
 async function deliver(orders, order, manifest) {
   const url = `${cfg.publicUrl}/album/${order.publicId}`;
   await orders.move(order.id, 'building', 'delivered', { delivered_at: now() });
   if (order.email) {
-    const text = `Your record is done.\n\n"${manifest.album}" — ${manifest.tracks.length} tracks.\n${url}\n\nThe page is private to that link. Downloads are on it.\n\nGhost Signals Records\n`;
+    const sleeve = manifest.coverSource === 'pending' ? 'The sleeve is still being painted; it appears on the same page when it is done.\n' : '';
+    const text = `Your record is done.\n\n"${manifest.album}" — ${manifest.tracks.length} tracks.\n${url}\n\nThe page is private to that link. Downloads are on it.\n${sleeve}\nGhost Signals Records\n`;
     const ok = await smtpSend(cfg.mail, { to: order.email, subject: `"${manifest.album}" is ready`, text });
     log(`mail to ${order.email}: ${ok ? 'sent' : 'not sent'}`);
   }
@@ -122,7 +119,24 @@ async function deliver(orders, order, manifest) {
   return url;
 }
 
+/** Covers past their deadline or attempts get a house sleeve. Runs at the top
+ *  of every tick, idle or not (during a build it waits for the build: minutes
+ *  against an hours-long deadline). Never throws into the build loop. */
+async function sweepCovers(orders, deps) {
+  try {
+    const did = await coversFor(orders, deps).sweep();
+    for (const d of did) {
+      log(`cover ${d.kept ? 'kept (re-roll gave up)' : `house sleeve ${d.house}`} for ${d.orderId} (${d.why})`);
+      if (cfg.mail.operator) {
+        await smtpSend(cfg.mail, { to: cfg.mail.operator, subject: `[records] cover: ${d.kept ? 're-roll gave up' : 'house sleeve'} (${d.why})`, text: `${cfg.publicUrl}/album/${d.publicId}\norder ${d.orderId}\nRe-roll: POST /admin/orders/${d.orderId}/cover\n` });
+      }
+    }
+    return did;
+  } catch (e) { log(`cover sweep: ${e.message}`); return []; }
+}
+
 async function tick(orders, deps) {
+  await sweepCovers(orders, deps);
   const order = await orders.claimNextBuild();
   if (!order) return false;
   log(`building ${order.id} "${order.brief.albumTitle}" (${order.tier})`);
@@ -146,9 +160,9 @@ async function main() {
     // The generator refuses a request without a callback URL even though
     // we poll; the studio answers 200 to whatever it posts there.
     suno: new Suno({ ...cfg.suno, callbackUrl: cfg.suno.callbackUrl || `${cfg.publicUrl}/api/suno/callback`, userAgent: cfg.userAgent }),
-    atelier: cfg.obc.jwt ? new Atelier({ ...cfg.obc, userAgent: cfg.userAgent }) : null,
+    covers: new Covers(db, cfg, { log }),
   };
-  log(`worker up; data ${cfg.dataDir}; atelier ${deps.atelier ? 'on' : 'off (placeholder covers)'}; brain ${cfg.brain.key ? 'on' : 'off (template lyrics)'}`);
+  log(`worker up; data ${cfg.dataDir}; covers queued for kannaka-art (house sleeves: ${deps.covers.houseSleeves().length} in ${cfg.covers.houseDir}); brain ${cfg.brain.key ? 'on' : 'off (template lyrics)'}`);
   for (;;) {
     let did = false;
     try { did = await tick(orders, deps); } catch (e) { log(`tick error: ${e.message}`); }
@@ -158,4 +172,4 @@ async function main() {
 
 if (require.main === module) main();
 
-module.exports = { buildOrder, buildTrack, buildCover, deliver, tick, orderDir, safeName };
+module.exports = { buildOrder, buildTrack, deliver, tick, sweepCovers, orderDir, safeName };

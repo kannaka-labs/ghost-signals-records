@@ -121,6 +121,33 @@ const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS purchases_state ON purchases(state, amount_micro, from_addr)`,
   `CREATE INDEX IF NOT EXISTS purchases_tx ON purchases(tx_hash)`,
   `CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT)`,
+  // The cover queue (covers.js). One row per order; the GPU runner on debain2
+  // leases rows over HTTPS and posts the picture back. `gen` is bumped by an
+  // admin re-roll so an upload for an older generation is refused; `prev_*`
+  // keep the cover a re-roll replaces, so a re-roll that never arrives leaves
+  // the old cover rather than a house sleeve.
+  `CREATE TABLE IF NOT EXISTS cover_jobs (
+     order_id TEXT PRIMARY KEY,
+     job_id TEXT UNIQUE NOT NULL,
+     subject TEXT NOT NULL,
+     state TEXT NOT NULL,
+     gen INTEGER NOT NULL DEFAULT 0,
+     attempts INTEGER NOT NULL DEFAULT 0,
+     size_fails INTEGER NOT NULL DEFAULT 0,
+     lease_id TEXT,
+     leased_until TEXT,
+     source TEXT,
+     meta TEXT,
+     prev_source TEXT,
+     prev_meta TEXT,
+     last_reason TEXT,
+     reviewed_at TEXT,
+     queued_at TEXT NOT NULL,
+     done_at TEXT,
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS cover_jobs_state ON cover_jobs(state, queued_at)`,
 ];
 
 class Db {

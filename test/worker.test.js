@@ -37,20 +37,23 @@ test('the longer clip is picked', () => {
   assert.equal(pickClip([{ audioUrl: 'a', duration: 100 }, { audioUrl: 'b', duration: 150 }, { audioUrl: '', duration: 999 }]).audioUrl, 'b');
 });
 
-test('a paid order builds every track, a placeholder cover, a manifest, and is delivered; a refused style is rewritten once', async () => {
+test('a paid order builds every track, queues its cover, writes a manifest, and is delivered with the sleeve still pending; a refused style is rewritten once', async () => {
   const db = await new Db(path.join(tmp, 'r.sqlite')).open();
   const orders = new Orders(db, cfg);
   const o = await orders.createFromBrief(BRIEF, { origin: 'web' });
   await orders.comp(o, 'test');
   const claimed = await orders.claimNextBuild();
   const suno = fakeSuno({ refuseFirst: true });
-  const manifest = await worker.buildOrder(orders, claimed, { suno, atelier: null, wait: {} });
+  const manifest = await worker.buildOrder(orders, claimed, { suno, wait: {} });
   assert.equal(manifest.tracks.length, 4);
-  assert.equal(manifest.coverSource, 'placeholder');
+  assert.equal(manifest.coverSource, 'pending', 'the cover is queued, never a placeholder');
   const dir = worker.orderDir(claimed);
   assert.ok(fs.existsSync(path.join(dir, '01 - One.mp3')));
-  assert.ok(fs.existsSync(path.join(dir, 'cover.png')));
+  assert.ok(!fs.existsSync(path.join(dir, 'cover.png')), 'the worker never writes a cover itself');
   assert.ok(fs.existsSync(path.join(dir, 'album.json')));
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'album.json'), 'utf8')).coverSource, undefined, 'cover state is not in album.json');
+  const job = await db.get('SELECT * FROM cover_jobs WHERE order_id=?', [claimed.id]);
+  assert.equal(job.state, 'queued');
   assert.equal(fs.readFileSync(path.join(dir, '01 - One.mp3'), 'utf8'), 'mp3:https://cdn/task-2-b', 'the longer variant, after one rewrite');
   const tracks = await orders.tracks(claimed.id);
   assert.ok(tracks.every((t) => t.status === 'done' && t.duration_sec === 181));
@@ -60,8 +63,9 @@ test('a paid order builds every track, a placeholder cover, a manifest, and is d
   assert.equal((await orders.get(claimed.id)).state, 'delivered');
   // Re-running the build is a no-op for finished tracks.
   const before = suno.calls();
-  await worker.buildOrder(orders, await orders.get(claimed.id), { suno, atelier: null, wait: {} });
+  await worker.buildOrder(orders, await orders.get(claimed.id), { suno, wait: {} });
   assert.equal(suno.calls(), before);
+  assert.equal((await db.all('SELECT * FROM cover_jobs WHERE order_id=?', [claimed.id])).length, 1, 'one cover job per order, however often it is built');
   await db.close();
 });
 
@@ -80,7 +84,7 @@ test('a task that dies on the generator side gets one fresh task', async () => {
     },
     async download(url, file) { fs.writeFileSync(file, url); return 1; },
   };
-  const manifest = await worker.buildOrder(orders, claimed, { suno: flaky, atelier: null, wait: {} });
+  const manifest = await worker.buildOrder(orders, claimed, { suno: flaky, wait: {} });
   assert.equal(manifest.tracks.length, 4);
   assert.equal(n, 5, 'one extra task for the one that died');
   const t = (await orders.tracks(claimed.id))[0];
@@ -94,7 +98,7 @@ test('a generator failure fails the order with a readable reason and a retry req
   const o = await orders.createFromBrief(BRIEF, { origin: 'web' });
   await orders.comp(o, 'test');
   const bad = { async generate() { throw new Error('suno generate refused: quota'); } };
-  const did = await worker.tick(orders, { suno: bad, atelier: null });
+  const did = await worker.tick(orders, { suno: bad });
   assert.equal(did, true);
   const after = await orders.get(o.id);
   assert.equal(after.state, 'failed');

@@ -68,7 +68,9 @@ exists from then on and fills in as the studio builds.
 - The generator refuses any style naming a real artist or band, at once. The desk
   checks the obvious shape; the worker rewrites once on the generator's refusal.
 - The audio CDN and the API both refuse a library user agent; a browser one is sent.
-- The Pixel Atelier needs the bot inside the building and about 95 s between images.
+- Covers are painted by kannaka-art on a qBraid GPU via a pull runner on debain2
+  (`ops/cover-runner/`); a cover never blocks delivery, and one that cannot be painted
+  gets one of the label's own house sleeves. See ops/DEPLOY.md, *Covers*.
 - A webhook body is read as one buffer and decoded once; string concatenation of chunks
   once corrupted a signature permanently.
 - `%h` in a system unit is root's home; the units use absolute paths.
