@@ -218,8 +218,11 @@ ssh debain2 '(crontab -l; echo "*/10 * * * * \$HOME/gsr-covers/gsr-cover-tick.sh
 
 The runner needs `~/kannaka-art/{kannaka_art.py,qbraid_run.sh}` (already deployed for the
 albums) and `~/qbraid-venv2`. Knobs (env): `GSR_COVER_MIN_CREDITS` (150),
-`GSR_COVER_MAX_PODS_DAY` (8 provisioned pods), `GSR_COVER_PROFILES`
-(`gpu-rtx-4090,gpu-l4,gpu-a10`). Tests: `python -m unittest discover -s ops/cover-runner`
+`GSR_COVER_MAX_PODS_DAY` (8 provisioned pods, re-checked before each pod),
+`GSR_COVER_DAY_CREDITS` (40: no new lease once the account has spent that much since the
+runner's first reading of the UTC day), `GSR_COVER_HELD_MAX_MIN` (90: a session older than
+this, or one whose 10/60 cutoff did not take, turns the heartbeat red at once and on every
+held tick, naming the instance), `GSR_COVER_PROFILES` (`gpu-rtx-4090,gpu-l4,gpu-a10`). Tests: `python -m unittest discover -s ops/cover-runner`
 (set `KANNAKA_ART_DIR` to run the real-planner tests).
 
 When covers arrive end to end: remove `OPENBOTCITY_JWT` from `~/.gs-records.env` (nothing

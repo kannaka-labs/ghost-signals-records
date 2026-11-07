@@ -410,6 +410,9 @@ async function main(opts = {}) {
         if (!o || !['building', 'delivered'].includes(o.state)) return send(res, 404, 'not found', 'text/plain');
         const name = decodeURIComponent(m[2]);
         if (name.includes('/') || name.includes('..')) return send(res, 400, 'bad name', 'text/plain');
+        // Only the live cover is public: replaced or rejected covers, their meta
+        // and in-flight uploads stay on the box.
+        if (/^cover\.(previous-|meta$|upload-|incoming-)/.test(name) || /\.previous-\d/.test(name)) return send(res, 404, 'not found', 'text/plain');
         const file = path.join(orderDir(o), name);
         if (!fs.existsSync(file)) return send(res, 404, 'not found', 'text/plain');
         const type = name.endsWith('.mp3') ? 'audio/mpeg' : name.endsWith('.png') ? 'image/png' : name.endsWith('.json') ? 'application/json' : 'application/octet-stream';

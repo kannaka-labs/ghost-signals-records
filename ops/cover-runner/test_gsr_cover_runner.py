@@ -279,6 +279,82 @@ class TestTick(Base):
         del re
 
 
+class TestReviewFixes(Base):
+    def test_a_setup_refusal_is_a_failure_not_busy(self):
+        self.assertEqual(R.classify(2, "REFUSED: no jobs file /x\n")["outcome"], "refused")
+        api = FakeApi(jobs(1))
+        ok, msg = R.tick(self.cfg, api, status_fn=self.status, pod_fn=lambda c, b, p: (2, "REFUSED: /k/kannaka_art.py missing\n"), ka=FakeKa())
+        self.assertFalse(ok); self.assertEqual(msg, "script-refused-gpu-rtx-4090")
+        self.assertEqual(len(api.releases), 1)
+
+    def test_a_failed_preflight_is_not_no_capacity(self):
+        api = FakeApi(jobs(1))
+        calls = []
+
+        def pf(c, b, p):
+            calls.append(p)
+            return 1, "=== START\nTraceback: auth\n=== preflight failed rc=1; nothing provisioned\n"
+        ok, msg = R.tick(self.cfg, api, status_fn=self.status, pod_fn=pf, ka=FakeKa())
+        self.assertFalse(ok); self.assertEqual(msg, "script-preflight-failed-gpu-rtx-4090")
+        self.assertEqual(calls, ["gpu-rtx-4090"], "no second profile after a preflight failure")
+        # Provisioning that raised (capacity) still falls through to the next profile.
+        nb = R.classify(1, "CREDITS_BEFORE 1\nPREFLIGHT_INSTANCES []\nNO IID; abort\nSTRAYS []\n")
+        self.assertEqual(nb["outcome"], "noboot")
+
+    def test_the_day_cap_is_rechecked_before_each_pod(self):
+        with open(os.path.join(self.tmp, "pods-created.txt"), "w") as f:
+            for i in range(7):
+                f.write(f"bma-{i} gsr-covers {R.now_iso()}\n")
+        calls = []
+
+        def noboot(cfg, batch, profile):
+            calls.append(profile)
+            return 1, f"PREFLIGHT_INSTANCES []\nPROVISIONED bma-{profile} t\nCUTOFF 10 60\nSTRAYS []\n"
+        api = FakeApi(jobs(1))
+        ok, msg = R.tick(self.cfg, api, status_fn=self.status, pod_fn=noboot, ka=FakeKa())
+        self.assertEqual(calls, ["gpu-rtx-4090"])
+        self.assertEqual((ok, msg), (False, "day-cap-8-pods"))
+        self.assertEqual(R.pods_today(self.tmp), 8)
+        self.assertEqual(len(api.releases), 1)
+
+    def test_daily_credit_budget(self):
+        api = FakeApi(jobs(2))
+        credits = [500.0]
+        st = lambda c: (credits[0], [])  # noqa: E731
+        self.assertTrue(R.tick(self.cfg, api, status_fn=st, pod_fn=pod_writes(), ka=FakeKa())[0])
+        credits[0] = 455.0
+        ok, msg = R.tick(self.cfg, api, status_fn=st, pod_fn=pod_writes(), ka=FakeKa())
+        self.assertEqual((ok, msg), (False, "day-budget-45-of-40"))
+        self.assertEqual(api.leases, 1, "nothing leased over budget")
+
+    def test_a_404_upload_settles_instead_of_wedging(self):
+        api = FakeApi(jobs(2), upload_status=404)
+        ok, msg = R.tick(self.cfg, api, status_fn=self.status, pod_fn=pod_writes(), ka=FakeKa())
+        self.assertTrue(ok, msg)
+        api.jobs = jobs(1)
+        api.upload_status = 200
+        ok, msg = R.tick(self.cfg, api, status_fn=self.status, pod_fn=pod_writes(), ka=FakeKa())
+        self.assertTrue(ok, msg); self.assertEqual(msg, "painted-1")
+
+    def test_watch_pages_on_a_wrong_cutoff_and_a_long_session(self):
+        cfg = dict(self.cfg, held_max_min=90)
+        self.assertIsNone(R.watch_check("CREDITS_BEFORE 1\n", 9999, cfg))
+        self.assertIsNone(R.watch_check("PROVISIONED bma-x t\n", 30, cfg), "cutoff line not written yet")
+        self.assertEqual(R.watch_check("PROVISIONED bma-x t\nCUTOFF None 1440\n", 30, cfg), "cutoff-not-60-bma-x")
+        self.assertEqual(R.watch_check("PROVISIONED bma-x t\nget err boom\nIID=bma-x\n", 30, cfg), "cutoff-not-60-bma-x")
+        self.assertIsNone(R.watch_check("PROVISIONED bma-x t\nCUTOFF 10 60\nBILLING_START t\n", 600, cfg))
+        self.assertEqual(R.watch_check("PROVISIONED bma-x t\nCUTOFF 10 60\n", 91 * 60, cfg), "pod-over-90min-bma-x")
+
+    def test_held_lock_turns_red_when_the_pod_is_old_or_alarmed(self):
+        cfg = dict(self.cfg, held_max_min=90)
+        self.assertEqual(R.held_status(cfg), (True, "held"))
+        R.write_json(R.held_path(cfg), {"t0": 1000.0, "iid": "bma-x", "alarm": None, "profile": "gpu-l4"})
+        self.assertEqual(R.held_status(cfg, now=1000.0 + 60 * 30), (True, "held"))
+        self.assertEqual(R.held_status(cfg, now=1000.0 + 60 * 121), (False, "held-121min-bma-x"))
+        R.write_json(R.held_path(cfg), {"t0": 1000.0, "iid": "bma-x", "alarm": "cutoff-not-60-bma-x"})
+        self.assertEqual(R.held_status(cfg, now=1001.0), (False, "cutoff-not-60-bma-x"))
+
+
 @unittest.skipUnless(KA, "kannaka_art.py not found (set KANNAKA_ART_DIR)")
 class TestRealPlanner(Base):
     def test_one_bad_subject_costs_one_job_not_the_batch(self):

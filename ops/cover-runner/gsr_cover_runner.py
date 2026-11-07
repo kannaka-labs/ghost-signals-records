@@ -68,6 +68,8 @@ def settings():
         "token_file": env("GSR_COVER_TOKEN_FILE", os.path.join(HOME, ".gsr-cover-token")),
         "min_credits": float(env("GSR_COVER_MIN_CREDITS", "150")),
         "max_pods_day": int(env("GSR_COVER_MAX_PODS_DAY", "8")),
+        "day_credits": float(env("GSR_COVER_DAY_CREDITS", "40")),
+        "held_max_min": float(env("GSR_COVER_HELD_MAX_MIN", "90")),
         "profiles": [p for p in env("GSR_COVER_PROFILES", "gpu-rtx-4090,gpu-l4,gpu-a10").split(",") if p],
         "max_jobs": max(1, min(8, int(env("GSR_COVER_MAX_JOBS", "8")))),
         "min_bytes": int(env("GSR_COVER_MIN_BYTES", "60000")),
@@ -271,8 +273,12 @@ def classify(rc, text):
     iid = iid_m.group(1) if iid_m else None
     if "BILLING_START" in text:
         outcome = "ran"
-    elif rc == 3 or (re.search(r"^REFUSED", text, re.M) and not iid):
+    elif rc == 3 or re.search(r"^REFUSED: instance\(s\) not TERMINATED", text, re.M):
         outcome = "busy"
+    elif re.search(r"^REFUSED", text, re.M) and not iid:
+        outcome = "refused"  # no jobs file / kannaka_art.py missing: a setup fault, not a busy account
+    elif not iid and "PREFLIGHT_INSTANCES" not in text:
+        outcome = "preflight-failed"  # the script's own qBraid read failed; nothing provisioned
     else:
         outcome = "noboot"
     alarms = []
@@ -292,14 +298,80 @@ def classify(rc, text):
             "credits_before": num("CREDITS_BEFORE"), "credits_after": num("CREDITS_AFTER")}
 
 
+def watch_check(text, elapsed_s, cfg):
+    """While a pod runs: an alarm string when a person must look NOW, else None. A pod whose
+    60-min cutoff did not take keeps qBraid's 24 h default, and a hung bootstrap would hold the
+    lock (and an ok heartbeat) all that time; this is what turns it red."""
+    iid_m = re.search(r"^PROVISIONED (\S+)", text, re.M)
+    if not iid_m:
+        return None
+    iid = iid_m.group(1)
+    cut = re.search(r"^CUTOFF (\S+) (\S+)", text, re.M)
+    if cut and (cut.group(1), cut.group(2)) != ("10", "60"):
+        return f"cutoff-not-60-{iid}"
+    if not cut and re.search(r"^(IID=|ALIAS=|BILLING_START)", text, re.M):
+        return f"cutoff-not-60-{iid}"
+    if elapsed_s > cfg["held_max_min"] * 60:
+        return f"pod-over-{int(cfg['held_max_min'])}min-{iid}"
+    return None
+
+
+def held_path(cfg):
+    return os.path.join(cfg["state"], "held.json")
+
+
+def held_status(cfg, now=None):
+    """For the cron wrapper when the lock is held: (ok, message)."""
+    h = read_json(held_path(cfg))
+    if not h:
+        return True, "held"
+    if h.get("alarm"):
+        return False, h["alarm"]
+    age = (now or time.time()) - float(h.get("t0") or 0)
+    if age > cfg["held_max_min"] * 60:
+        return False, f"held-{int(age // 60)}min-{h.get('iid') or h.get('profile')}"
+    return True, "held"
+
+
 def run_pod(cfg, batch, profile):
-    """One qbraid_run.sh session. No timeout here on purpose (see the module docstring)."""
+    """One qbraid_run.sh session. Never killed on a clock (see the module docstring); it is
+    watched instead, and a wrong cutoff or an over-long session pages at once with the id."""
     logf = os.path.join(batch, f"qbraid-{profile}.log")
     e = dict(os.environ, MODE="base", SLUG=profile, RATE=RATES.get(profile, "0"), LOG=logf)
-    with open(os.path.join(batch, f"run-{profile}.out"), "w", encoding="utf-8") as out:
-        rc = subprocess.call(["bash", os.path.join(cfg["ka_dir"], "qbraid_run.sh"),
-                              os.path.join(batch, "jobs.json"), os.path.join(batch, "out")],
-                             stdout=out, stderr=subprocess.STDOUT, env=e)
+    t0 = time.time()
+    held = {"batch": os.path.basename(batch), "profile": profile, "t0": t0, "iid": None, "alarm": None}
+    write_json(held_path(cfg), held)
+    try:
+        with open(os.path.join(batch, f"run-{profile}.out"), "w", encoding="utf-8") as out:
+            proc = subprocess.Popen(["bash", os.path.join(cfg["ka_dir"], "qbraid_run.sh"),
+                                     os.path.join(batch, "jobs.json"), os.path.join(batch, "out")],
+                                    stdout=out, stderr=subprocess.STDOUT, env=e)
+            while True:
+                try:
+                    rc = proc.wait(timeout=15)
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+                try:
+                    with open(logf, encoding="utf-8", errors="replace") as fh:
+                        live = fh.read()
+                except OSError:
+                    continue
+                m = re.search(r"^PROVISIONED (\S+)", live, re.M)
+                if m and held["iid"] != m.group(1):
+                    held["iid"] = m.group(1)
+                    write_json(held_path(cfg), held)
+                alarm = watch_check(live, time.time() - t0, cfg)
+                if alarm and alarm != held["alarm"]:
+                    held["alarm"] = alarm
+                    write_json(held_path(cfg), held)
+                    log(f"ALARM while the pod runs: {alarm}")
+                    gatus_ping(cfg, False, alarm)
+    finally:
+        try:
+            os.remove(held_path(cfg))
+        except OSError:
+            pass
     time.sleep(3)  # the script's tee may still be flushing its EXIT-trap lines
     text = ""
     for f in (logf, os.path.join(batch, f"run-{profile}.out")):
@@ -374,6 +446,9 @@ def upload_batch(api, batch, min_bytes, ledger=None):
                 if status == 400:
                     size_only = size_only and body.get("reason") == "too_small"
                     continue
+                if status == 404:
+                    outcome = "refused-404"  # the store has no such job: settle it, never wedge the queue
+                    break
                 raise OSError(f"upload answered {status}")
             if outcome is None:
                 reason = "no passing candidate" if made else "pod made no image for this job"
@@ -443,6 +518,18 @@ def prune(cfg, now=None):
             shutil.rmtree(b, ignore_errors=True)
 
 
+def day_spent(cfg, credits):
+    """Credits spent since this runner's first reading of the UTC day. Other jobs' spend counts
+    too: the budget is on the account, which is what a bad day would cost."""
+    day = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    path = os.path.join(cfg["state"], "credit-day.json")
+    d = read_json(path, {})
+    if d.get("day") != day:
+        d = {"day": day, "start": credits}
+        write_json(path, d)
+    return float(d["start"]) - credits
+
+
 def tick(cfg, api, status_fn=qbraid_status, pod_fn=run_pod, ka=None, extra=None):
     """One tick. Returns (ok, message) for the heartbeat."""
     os.makedirs(cfg["state"], exist_ok=True)
@@ -458,6 +545,9 @@ def tick(cfg, api, status_fn=qbraid_status, pod_fn=run_pod, ka=None, extra=None)
         return True, "busy"  # someone else's pod; the queue-age probe watches for starvation
     if credits < cfg["min_credits"]:
         return False, f"credits-{int(credits)}-under-{int(cfg['min_credits'])}"
+    spent = day_spent(cfg, credits)
+    if spent >= cfg["day_credits"]:
+        return False, f"day-budget-{int(spent)}-of-{int(cfg['day_credits'])}"
     jobs = api.lease(cfg["max_jobs"])
     if not jobs and not extra:
         return True, "idle"
@@ -478,18 +568,25 @@ def tick(cfg, api, status_fn=qbraid_status, pod_fn=run_pod, ka=None, extra=None)
     write_json(os.path.join(batch, "batch.json"), st)
     log(f"batch {episode}: {len(planned)} job(s), {len(plan['jobs'])} image(s)")
     alarms, ran = [], None
+    capped = None
     for profile in cfg["profiles"]:
+        n = pods_today(cfg["state"])
+        if n >= cfg["max_pods_day"]:
+            capped = f"day-cap-{n}-pods"
+            break
         rc, text = pod_fn(cfg, batch, profile)
         c = classify(rc, text)
         if c["iid"]:
             register_pod(cfg["state"], c["iid"])
         alarms += c["alarms"]
         log(f"{profile}: rc={rc} outcome={c['outcome']} pod={c['iid']} credits {c['credits_before']} -> {c['credits_after']}")
-        if c["outcome"] == "busy":
+        if c["outcome"] in ("busy", "refused", "preflight-failed"):
             release_all(api, planned)
             st["phase"] = "released"
             write_json(os.path.join(batch, "batch.json"), st)
-            return (False, alarms[0]) if alarms else (True, "busy")
+            if alarms:
+                return False, alarms[0]
+            return (True, "busy") if c["outcome"] == "busy" else (False, f"script-{c['outcome']}-{profile}")
         if c["outcome"] == "ran":
             ran = profile
             break
@@ -497,7 +594,9 @@ def tick(cfg, api, status_fn=qbraid_status, pod_fn=run_pod, ka=None, extra=None)
         release_all(api, planned)
         st["phase"] = "released"
         write_json(os.path.join(batch, "batch.json"), st)
-        return (False, alarms[0]) if alarms else (True, "no-capacity")
+        if alarms:
+            return False, alarms[0]
+        return (False, capped) if capped else (True, "no-capacity")
     st["phase"], st["profile"] = "generated", ran
     write_json(os.path.join(batch, "batch.json"), st)
     complete = upload_batch(api, batch, cfg["min_bytes"], os.path.join(cfg["state"], "ledger.jsonl"))
@@ -544,7 +643,12 @@ def main(argv=None):
     if a.cmd == "dry-run":
         return dry_run(cfg, a.fixture, a.out)
     if a.cmd == "ping":
-        gatus_ping(cfg, a.status == "ok", a.message)
+        ok, msg = a.status == "ok", a.message
+        if ok and msg == "held":
+            ok, msg = held_status(cfg)  # a held lock is fine only while the pod is young and sane
+            if not ok:
+                log(f"held: {msg}")
+        gatus_ping(cfg, ok, msg)
         return 0
     token = read_secret(cfg["token_file"])
     if not token:

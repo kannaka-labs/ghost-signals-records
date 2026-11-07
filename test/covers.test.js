@@ -291,6 +291,53 @@ test('status counts pending covers, and an empty queue is 0 minutes old, not nul
   await db.close();
 });
 
+test('a refunded order neither pages the queue probe nor gets a house sleeve', async () => {
+  const houseDir = path.join(tmp, 'house-refund'); fs.mkdirSync(houseDir, { recursive: true });
+  fs.writeFileSync(path.join(houseDir, 'gsr-house-01.png'), png(1024, 1024, { seed: 11 }));
+  const { db, orders, covers } = await fresh('refund-status');
+  covers.c = { ...covers.c, houseDir };
+  const o = await claimedOrder(orders); await covers.enqueue(o);
+  await db.run('UPDATE orders SET refunded_at=? WHERE id=?', [new Date().toISOString(), o.id]);
+  assert.deepEqual(await covers.status(Date.now() + 7 * 3600000), { queued: 0, leased: 0, oldestQueuedMinutes: 0 });
+  assert.equal((await covers.sweep(new Date(Date.now() + 9 * 3600000))).length, 0);
+  assert.equal((await covers.get(o.id)).state, 'queued');
+  await db.close();
+});
+
+test('place never leaves cover.png missing, and a house sleeve that raced a painted upload gives way to it', async () => {
+  const houseDir = path.join(tmp, 'house-race'); fs.mkdirSync(houseDir, { recursive: true });
+  fs.writeFileSync(path.join(houseDir, 'gsr-house-01.png'), png(1024, 1024, { seed: 12 }));
+  const { db, orders, covers } = await fresh('race');
+  covers.c = { ...covers.c, houseDir };
+  const o = await claimedOrder(orders); await covers.enqueue(o);
+  const job = await covers.get(o.id);
+  const dir = covers.orderDir(o.publicId);
+  // The web process paints between the sweep's CAS and its rename.
+  const realPlace = covers.place.bind(covers);
+  let raced = false;
+  covers.place = (d, tmpOut, metaStr) => {
+    if (!raced && metaStr.startsWith('house|')) {
+      raced = true;
+      const painted = path.join(d, 'cover.incoming-painted.png');
+      fs.writeFileSync(painted, BIG2);
+      const pm = `kannaka-art|x|1|gpu-l4|${'a'.repeat(64)}`;
+      db.run(`UPDATE cover_jobs SET state='done', source='kannaka-art', meta=? WHERE job_id=?`, [pm, job.job_id]);
+      realPlace(d, painted, pm);
+    }
+    const kept = realPlace(d, tmpOut, metaStr);
+    assert.ok(fs.existsSync(path.join(d, 'cover.png')));
+    return kept;
+  };
+  await covers.sweep(new Date(Date.now() + 9 * 3600000));
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(raced);
+  const row = await covers.get(o.id);
+  assert.equal(row.state, 'done');
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'cover.png')), BIG2, 'the painted cover stands');
+  assert.equal(covers.fileMeta(dir), row.meta);
+  await db.close();
+});
+
 // ---- the worker -------------------------------------------------------------
 const okSuno = {
   async generate() { return 'task'; },
@@ -372,6 +419,7 @@ test('the runner routes: own token only (503 unset, 401 wrong or empty), lease, 
     assert.equal(a1.json.coverPending, false);
     const img = await fetch(base + a1.json.cover);
     assert.equal(img.status, 200); assert.equal(img.headers.get('content-type'), 'image/png');
+    assert.equal((await fetch(`${base}/album/${o.publicId}/file/cover.meta`)).status, 404, 'cover.meta is not public');
 
     // fail / release need the live lease; a wrong one is a 409.
     assert.equal((await call(base, `/internal/covers/${j.jobId}/fail`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify({ gen: 0, leaseId: 'nope', reason: 'x' }) })).status, 409);
@@ -380,6 +428,8 @@ test('the runner routes: own token only (503 unset, 401 wrong or empty), lease, 
     const rr = await call(base, `/admin/orders/${o.id}/cover`, { method: 'POST', headers: { authorization: 'Bearer adm' } });
     assert.equal(rr.status, 202); assert.equal(rr.json.gen, 1);
     assert.equal((await fetch(base + a1.json.cover)).status, 200);
+    const prev = fs.readdirSync(path.join(tmp, 'orders', o.publicId)).filter((n) => n.startsWith('cover.previous-'));
+    for (const n of prev) assert.equal((await fetch(`${base}/album/${o.publicId}/file/${n}`)).status, 404, 'a replaced cover is not public');
     const l2 = await call(base, '/internal/covers/lease', { headers: auth });
     const k = l2.json.jobs[0];
     assert.equal(k.gen, 1);

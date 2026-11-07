@@ -249,12 +249,19 @@ class Covers {
     return { tmpOut };
   }
 
-  /** Put a prepared file in place: the cover it replaces is kept beside it. */
+  /** Put a prepared file in place: the cover it replaces is kept beside it.
+   *  The old file is linked (or copied) aside first and the new one renamed
+   *  over it, so cover.png is never missing. Returns the kept path or null. */
   place(dir, tmpOut, metaStr) {
     const cover = path.join(dir, 'cover.png');
-    if (fs.existsSync(cover)) fs.renameSync(cover, path.join(dir, `cover.previous-${Date.now()}.png`));
+    let kept = null;
+    if (fs.existsSync(cover)) {
+      kept = path.join(dir, `cover.previous-${Date.now()}.png`);
+      try { fs.linkSync(cover, kept); } catch { fs.copyFileSync(cover, kept); }
+    }
     fs.renameSync(tmpOut, cover);
     writeAtomic(path.join(dir, 'cover.meta'), metaStr);
+    return kept;
   }
 
   fileMeta(dir) {
@@ -275,7 +282,8 @@ class Covers {
     const deadline = new Date(at.getTime() - (this.c.deadlineHours || 8) * 3600000).toISOString();
     const rows = await this.db.all(
       `SELECT c.*, o.public_id AS public_id FROM cover_jobs c JOIN orders o ON o.id = c.order_id
-        WHERE c.state IN ('queued','leased') AND (c.queued_at < ? OR c.attempts >= ? OR c.size_fails >= ?)`,
+        WHERE c.state IN ('queued','leased') AND (c.queued_at < ? OR c.attempts >= ? OR c.size_fails >= ?)
+          AND o.refunded_at IS NULL AND o.disputed_at IS NULL`,
       [deadline, this.c.maxAttempts || 3, this.c.maxSizeFails || 2],
     );
     const done = [];
@@ -303,7 +311,17 @@ class Covers {
       fs.mkdirSync(dir, { recursive: true });
       const tmp = path.join(dir, `cover.incoming-${rand()}.png`);
       fs.writeFileSync(tmp, src);
-      this.place(dir, tmp, metaStr);
+      const kept = this.place(dir, tmp, metaStr);
+      // The web process may have taken this row house -> done between our CAS
+      // and our rename, and placed its painted cover first: ours would then
+      // have overwritten it. Put the painted one back.
+      const after = await this.byJob(job.job_id);
+      if (after && after.meta !== metaStr && this.fileMeta(dir) === metaStr && kept && fs.existsSync(kept)) {
+        fs.renameSync(kept, path.join(dir, 'cover.png'));
+        writeAtomic(path.join(dir, 'cover.meta'), after.meta);
+        this.log(`cover sweep: order ${job.order_id} was painted while the house sleeve went in; painted cover restored`);
+        continue;
+      }
       done.push({ orderId: job.order_id, publicId: job.public_id, house: pick, why });
     }
     return done;
@@ -313,8 +331,9 @@ class Covers {
    *  minutes old, not null (a null would fail the probe's condition). */
   async status(at = Date.now()) {
     const r = await this.db.get(
-      `SELECT SUM(CASE WHEN state='queued' THEN 1 ELSE 0 END) AS queued, SUM(CASE WHEN state='leased' THEN 1 ELSE 0 END) AS leased,
-              MIN(CASE WHEN state IN ('queued','leased') THEN queued_at END) AS oldest FROM cover_jobs`,
+      `SELECT SUM(CASE WHEN c.state='queued' THEN 1 ELSE 0 END) AS queued, SUM(CASE WHEN c.state='leased' THEN 1 ELSE 0 END) AS leased,
+              MIN(CASE WHEN c.state IN ('queued','leased') THEN c.queued_at END) AS oldest
+         FROM cover_jobs c JOIN orders o ON o.id = c.order_id WHERE o.refunded_at IS NULL AND o.disputed_at IS NULL`,
     );
     return { queued: (r && r.queued) || 0, leased: (r && r.leased) || 0, oldestQueuedMinutes: r && r.oldest ? minutesFrom(r.oldest, at) : 0 };
   }
