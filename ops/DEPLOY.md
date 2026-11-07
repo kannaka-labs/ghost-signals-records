@@ -200,7 +200,8 @@ Gatus (`~/gatus/config/config.yaml`), in the same change as the cron:
     conditions: ["[STATUS] == 200", "[BODY].oldestQueuedMinutes < 360"]
     alerts: [{type: email, description: "a records cover has waited 6 h (house sleeve at 8 h): debain2 runner, qBraid or credits"}]
 # external-endpoints:
-  - {name: gsr-cover-runner, group: notice, token: "${GATUS_PUSH_TOKEN}", heartbeat: {interval: 30m}, alerts: [{type: email, description: "the GSR cover runner on debain2 has not reported for 30 minutes, or reported a failure (credits, day cap, pod hygiene)"}]}
+# group page, not notice: a failure here can be a pod burning qBraid credits (named by id)
+  - {name: gsr-cover-runner, group: page, token: "${GATUS_PUSH_TOKEN}", heartbeat: {interval: 30m}, alerts: [{type: email, description: "the GSR cover runner on debain2 has not reported for 30 minutes, or reported a failure (pod over 90 min or cutoff not set: check the named qBraid instance; credits, day budget, day cap, upload pending)"}]}
 ```
 
 ### Install (debain2)
