@@ -14,10 +14,10 @@ const { Tower } = require('./tower');
 const { Kax } = require('./kax');
 const { readBody, readJson } = require('./read-body');
 const { TIERS, PALETTE, ART_DIRECTIONS } = require('./catalog');
-const { orderDir, buildCover, safeName } = require('./worker');
+const { orderDir, safeName } = require('./worker');
 const { Suno } = require('./suno');
 const { smtpSend } = require('./mail');
-const { Atelier } = require('./art');
+const { Covers } = require('./covers');
 const { Store } = require('./store');
 const { Relayer } = require('./gasless');
 const { Atm } = require('./atm');
@@ -114,6 +114,12 @@ async function main(opts = {}) {
   const store = new Store(db, cfg, { log, ffmpeg: process.env.GSR_FFMPEG === '' ? null : (process.env.GSR_FFMPEG || 'ffmpeg'), relayer: relayer.enabled() ? relayer : null });
   const vesper = new Vesper(cfg, store, { log });
   const atm = new Atm(cfg.atm, { log, fetch: opts.atmFetch, ethBalance: relayer.chain && relayer.chain.balanceWei ? (a) => relayer.chain.balanceWei(a) : null });
+  const covers = new Covers(db, cfg, { log, crop: opts.coverCrop });
+  // The cover URL carries the file's mtime, so a sleeve that is replaced (a
+  // house sleeve upgraded, a re-roll) is fetched fresh, not from an hour-old cache.
+  const coverUrl = (o) => {
+    try { return `/album/${o.publicId}/file/cover.png?v=${Math.floor(fs.statSync(path.join(orderDir(o), 'cover.png')).mtimeMs)}`; } catch { return null; }
+  };
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
@@ -324,6 +330,10 @@ async function main(opts = {}) {
       // ---- the shelf: albums whose buyers chose to show them ---------------
       if (p === '/api/showcase') {
         const rows = await orders.featured(24);
+        // A freshly painted cover goes on the public shelf only after the
+        // operator has looked at it (POST /admin/orders/<id>/cover/ok).
+        const shelfCover = {};
+        for (const { order: o } of rows) shelfCover[o.id] = Covers.showable(await covers.get(o.id)) ? coverUrl(o) : null;
         return send(res, 200, {
           albums: rows.map(({ order: o, tracks }) => ({
             publicId: o.publicId,
@@ -333,7 +343,7 @@ async function main(opts = {}) {
             style: o.brief.style,
             note: o.shareNote || null,
             deliveredAt: o.deliveredAt,
-            cover: fs.existsSync(path.join(orderDir(o), 'cover.png')) ? `/album/${o.publicId}/file/cover.png` : null,
+            cover: shelfCover[o.id],
             radioTrack: o.radioTrackIdx === null || o.radioTrackIdx === undefined ? null : o.radioTrackIdx + 1,
             radioAired: Boolean(o.radioAiredAt),
             tracks: tracks.filter((t) => t.file).map((t) => ({
@@ -349,7 +359,8 @@ async function main(opts = {}) {
         const o = await orders.getByPublicId(m[1]);
         if (!o) return send(res, 404, { error: 'not found' });
         const tracks = await orders.tracks(o.id);
-        return send(res, 200, { publicId: o.publicId, state: o.state, album: o.brief.albumTitle, tier: o.tierLabel, tracks: tracks.map((t) => ({ n: t.idx + 1, title: t.title, status: t.status, file: t.file ? `/album/${o.publicId}/file/${encodeURIComponent(t.file)}` : null, duration: t.duration_sec })), cover: fs.existsSync(path.join(orderDir(o), 'cover.png')) ? `/album/${o.publicId}/file/cover.png` : null, checkoutUrl: o.state === 'quoted' ? o.checkoutUrl : null, deliveredAt: o.deliveredAt, featured: Boolean(o.featuredAt), note: o.shareNote || null, radioTrack: o.radioTrackIdx === null || o.radioTrackIdx === undefined ? null : o.radioTrackIdx + 1, radioAired: Boolean(o.radioAiredAt) });
+        const cj = await covers.get(o.id);
+        return send(res, 200, { publicId: o.publicId, state: o.state, album: o.brief.albumTitle, tier: o.tierLabel, tracks: tracks.map((t) => ({ n: t.idx + 1, title: t.title, status: t.status, file: t.file ? `/album/${o.publicId}/file/${encodeURIComponent(t.file)}` : null, duration: t.duration_sec })), cover: coverUrl(o), coverPending: Boolean(cj && ['queued', 'leased'].includes(cj.state)), checkoutUrl: o.state === 'quoted' ? o.checkoutUrl : null, deliveredAt: o.deliveredAt, featured: Boolean(o.featuredAt), note: o.shareNote || null, radioTrack: o.radioTrackIdx === null || o.radioTrackIdx === undefined ? null : o.radioTrackIdx + 1, radioAired: Boolean(o.radioAiredAt) });
       }
       // The buyer's two decisions. Knowing the album's link is the capability:
       // the same thing that lets you play it lets you share it or spend its
@@ -427,6 +438,52 @@ async function main(opts = {}) {
         return send(res, r.status, r.body, 'text/plain');
       }
 
+      // ---- the cover queue, for the GPU runner (bearer GSR_COVER_TOKEN) -------
+      // Its own token, scoped to these routes: the runner on debain2 never
+      // holds the admin token. Unset = 503, so an empty bearer never matches.
+      if (p.startsWith('/internal/covers/')) {
+        if (!cfg.covers.token) return send(res, 503, { error: 'cover token not set' });
+        if (!sameSecret(req.headers.authorization || '', `Bearer ${cfg.covers.token}`)) return send(res, 401, { error: 'unauthorized' });
+        if (p === '/internal/covers/lease' && req.method === 'GET') {
+          const max = Math.max(1, Math.min(8, parseInt(url.searchParams.get('max') || '8', 10) || 8));
+          return send(res, 200, { jobs: await covers.lease(max) });
+        }
+        if ((m = /^\/internal\/covers\/([0-9a-f]{16})$/.exec(p)) && req.method === 'POST') {
+          if (!/^image\/png\b/i.test(req.headers['content-type'] || '')) return send(res, 415, { ok: false, reason: 'want image/png' });
+          const body = await readBody(req, cfg.covers.uploadLimit);
+          const gen = parseInt(req.headers['x-cover-gen'], 10);
+          const r = await covers.ingest(m[1], { gen, body, meta: req.headers['x-cover-meta'] });
+          if (r.status === 200 && r.orderId) {
+            const o = await orders.get(r.orderId);
+            log(`cover painted for ${r.orderId}${r.upgradedHouse ? ' (over a house sleeve)' : ''}`);
+            if (o && cfg.mail.operator) {
+              smtpSend(cfg.mail, {
+                to: cfg.mail.operator,
+                subject: `[records] cover painted: ${o.brief.albumTitle}`,
+                text: `Look at it before anyone else does: no face, no lettering, nothing unkind.\n\n`
+                  + `${cfg.publicUrl}/album/${o.publicId}/file/cover.png\n${cfg.publicUrl}/album/${o.publicId}\n\n`
+                  + `Re-roll: curl -X POST -H "Authorization: Bearer $GSR_ADMIN_TOKEN" ${cfg.publicUrl}/admin/orders/${o.id}/cover\n`
+                  + `Fine, may go on the shelf: curl -X POST -H "Authorization: Bearer $GSR_ADMIN_TOKEN" ${cfg.publicUrl}/admin/orders/${o.id}/cover/ok\n`,
+              }).catch(() => {});
+            }
+          }
+          return send(res, r.status, r.body);
+        }
+        if ((m = /^\/internal\/covers\/([0-9a-f]{16})\/(fail|release)$/.exec(p)) && req.method === 'POST') {
+          const body = await readJson(req, 4 * 1024);
+          const args = { gen: Number(body.gen), leaseId: typeof body.leaseId === 'string' ? body.leaseId : '', reason: typeof body.reason === 'string' ? body.reason : '', sizeOnly: body.sizeOnly === true };
+          const ok = m[2] === 'fail' ? await covers.fail(m[1], args) : await covers.release(m[1], args);
+          return send(res, ok ? 200 : 409, { ok });
+        }
+        return send(res, 404, { error: 'not found' });
+      }
+      // Counts for the monitor on this box (Gatus probes 127.0.0.1 directly).
+      // nginx always adds X-Forwarded-For, so from the internet this is a 404.
+      if (p === '/api/covers/status') {
+        if (req.headers['x-forwarded-for']) return send(res, 404, { error: 'not found' });
+        return send(res, 200, await covers.status());
+      }
+
       // ---- admin (bearer ADMIN token) ----------------------------------------
       if (p.startsWith('/admin/')) {
         const auth = req.headers.authorization || '';
@@ -451,7 +508,11 @@ async function main(opts = {}) {
           if (!o) return send(res, 404, { error: 'not found' });
           if (m[2] === 'comp') return send(res, 200, await orders.comp(o, 'admin'));
           if (m[2] === 'retry') return send(res, 200, { ok: await orders.requeue(o.id) });
-          if (m[2] === 'cancel') return send(res, 200, { ok: await orders.move(o.id, o.state, 'cancelled') });
+          if (m[2] === 'cancel') {
+            const ok = await orders.move(o.id, o.state, 'cancelled');
+            if (ok) await covers.cancel(o.id);
+            return send(res, 200, { ok });
+          }
         }
         if ((m = /^\/admin\/orders\/([0-9a-f-]{36})\/track\/(\d+)\/rebuild$/.exec(p)) && req.method === 'POST') {
           // A delivered order goes back to the floor for one track; the worker
@@ -466,15 +527,21 @@ async function main(opts = {}) {
           await orders.db.run('UPDATE orders SET state=?, updated_at=? WHERE id=? AND state=?', ['paid', new Date().toISOString(), o.id, 'delivered']);
           return send(res, 200, { ok: true, track: idx + 1 });
         }
+        // Re-roll a cover: a new generation goes on the queue and this answers
+        // at once. The current cover stays until the new one arrives, then is
+        // kept beside it as cover.previous-<ts>.png.
         if ((m = /^\/admin\/orders\/([0-9a-f-]{36})\/cover$/.exec(p)) && req.method === 'POST') {
           const o = await orders.get(m[1]);
-          if (!o || !['building', 'delivered'].includes(o.state)) return send(res, 404, { error: 'no such buildable order' });
-          const dir = orderDir(o);
-          const f = path.join(dir, 'cover.png');
-          if (fs.existsSync(f)) fs.renameSync(f, path.join(dir, `cover.previous-${Date.now()}.png`));
-          const atelier = cfg.obc.jwt ? new Atelier({ ...cfg.obc, userAgent: cfg.userAgent }) : null;
-          const source = await buildCover(o, atelier);
-          return send(res, 200, { ok: source !== 'placeholder', source });
+          if (!o || !['paid', 'building', 'delivered', 'failed'].includes(o.state)) return send(res, 404, { error: 'no such buildable order' });
+          const job = await covers.reroll(o);
+          return send(res, 202, { ok: true, queued: true, gen: job.gen, status: await covers.status() });
+        }
+        // The operator has looked at a painted cover: it may go on the shelf.
+        if ((m = /^\/admin\/orders\/([0-9a-f-]{36})\/cover\/ok$/.exec(p)) && req.method === 'POST') {
+          return send(res, 200, { ok: await covers.markReviewed(m[1]) });
+        }
+        if (p === '/admin/covers' && req.method === 'GET') {
+          return send(res, 200, { status: await covers.status(), jobs: await db.all('SELECT order_id, job_id, state, gen, attempts, size_fails, source, last_reason, reviewed_at, queued_at, done_at, leased_until FROM cover_jobs ORDER BY updated_at DESC LIMIT 50') });
         }
         // The store's admin: publish a finished album from files on this
         // machine, list sales, give one away, nudge the chain watcher.

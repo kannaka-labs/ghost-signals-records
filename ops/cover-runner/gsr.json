@@ -1,0 +1,12 @@
+{
+  "show": "gsr",
+  "name": "Ghost Signals Records order covers (painted by kannaka-art for the studio's buyers)",
+  "tail": "fine art, rich detail, cinematic light, square composition, no text",
+  "negative": "text, letters, words, typography, caption, title, watermark, signature, artist signature, initials, monogram, handwriting, logo, frame, border, blurry, deformed, extra limbs, lowres, face, faces, portrait, eyes, nsfw, nudity, naked, gore, blood, violence",
+  "rules": [
+    "The subject is built on the store (server/art.js coverSubject): art direction + theme, never the album title, never 'album cover'.",
+    "No face: any figure is seen from behind or as a faceless silhouette.",
+    "No text, letters, logos, signs or painter signatures; the store crops 40 px off the sides and 80 off the bottom to take corner signatures off.",
+    "Base mode only: lightning runs at guidance 0 and drops this negative prompt."
+  ]
+}
