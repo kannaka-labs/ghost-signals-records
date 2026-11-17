@@ -168,7 +168,7 @@
       ul.appendChild(li);
     });
     $('cost-note').textContent = c.freeOpen
-      ? 'While the studio has generator credit, records up to ' + c.freeMaxTier + ' size are on the house, one to a customer. When that runs out the prices above apply.'
+      ? 'While the studio has generator credit, records up to ' + c.freeMaxTier + ' size are on the house, one to a network address. When that runs out the prices above apply.'
       : 'Paid once, by card. The record and everything in it is yours; nothing recurring.';
   }).catch(function () {});
 

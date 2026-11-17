@@ -38,6 +38,10 @@ const SCHEMA = [
   `ALTER TABLE orders ADD COLUMN radio_track_idx INTEGER`,
   `ALTER TABLE orders ADD COLUMN radio_requested_at TEXT`,
   `ALTER TABLE orders ADD COLUMN radio_aired_at TEXT`,
+  // A salted hash of the web visitor's network address, for the free door's
+  // one-per-address cap. Never the address itself.
+  `ALTER TABLE orders ADD COLUMN ip_tag TEXT`,
+  `CREATE INDEX IF NOT EXISTS orders_ip_tag ON orders(ip_tag)`,
   `CREATE INDEX IF NOT EXISTS orders_state ON orders(state)`,
   `CREATE INDEX IF NOT EXISTS orders_featured ON orders(featured_at)`,
   `CREATE INDEX IF NOT EXISTS orders_pi ON orders(stripe_payment_intent)`,

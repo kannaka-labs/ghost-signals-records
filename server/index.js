@@ -323,7 +323,7 @@ async function main(opts = {}) {
         if (body.reset) { session = await orders.newSession(null, 'web'); return send(res, 200, { session: session.id, reply: desk.opening(session), step: session.state.step }, undefined, { 'set-cookie': `gsr=${session.id}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax; Secure` }); }
         if (typeof body.text !== 'string' || !body.text.trim()) return send(res, 200, { session: sid, reply: desk.opening(session), step: session.state.step }, undefined, setCookie);
         const email = typeof body.email === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(body.email) ? body.email.trim().slice(0, 200) : undefined;
-        const r = await desk.turn(session, body.text.slice(0, 4000), { principal: null, origin: 'web', email });
+        const r = await desk.turn(session, body.text.slice(0, 4000), { principal: null, origin: 'web', email, ip: clientIp(req) });
         return send(res, 200, { session: sid, reply: r.reply, step: r.session.state.step, brief: r.session.state.brief, order: r.order ? { publicId: r.order.publicId, state: r.order.state, checkoutUrl: r.order.checkoutUrl, priceCents: r.order.priceCents } : null }, undefined, setCookie);
       }
 
