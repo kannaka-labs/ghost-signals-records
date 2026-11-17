@@ -143,3 +143,22 @@ test('tower events verify by hmac over the raw body, dedupe by id, and only addr
   assert.ok(parts.every((p) => p.length <= 100));
   await db.close();
 });
+
+test('free door: a second session from the same network address is counted against the first', async () => {
+  const { orders } = await fresh();
+  const tag = await orders.ipTag('203.0.113.7');
+  assert.match(tag, /^[0-9a-f]{32}$/);
+  assert.equal(await orders.ipTag('203.0.113.7'), tag);
+  assert.notEqual(await orders.ipTag('203.0.113.8'), tag);
+  assert.equal(await orders.ipTag(''), null);
+  const s1 = await orders.newSession(null, 'web');
+  const o1 = await orders.createFromBrief(BRIEF, { origin: 'web', ipTag: tag });
+  await orders.saveSession(s1.id, s1.state, o1.id);
+  assert.equal((await orders.grantFree(o1, 'test')).ok, true);
+  const s2 = await orders.newSession(null, 'web');
+  assert.equal(await orders.freeGrantedTo({ principal: null, sessionId: s2.id, ipTag: tag }), 1);
+  assert.equal(await orders.freeGrantedTo({ principal: null, sessionId: s2.id, ipTag: await orders.ipTag('203.0.113.8') }), 0);
+  assert.equal(await orders.freeGrantedTo({ principal: null, sessionId: s1.id, ipTag: null }), 1);
+  const row = await orders.db.get('SELECT ip_tag FROM orders WHERE id=?', [o1.id]);
+  assert.equal(row.ip_tag, tag);
+});

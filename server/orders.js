@@ -35,15 +35,31 @@ class Orders {
   }
 
   // ---- orders -----------------------------------------------------------
-  async createFromBrief(brief, { principal, origin, email }) {
+  /** A salted hash that stands for a network address in the free door's cap.
+   *  The salt lives in this database and nowhere else, so the tag cannot be
+   *  matched against addresses by anyone who only sees a copy of the rows. */
+  async ipTag(ip) {
+    if (!ip) return null;
+    if (!this._ipSalt) {
+      let row = await this.db.get('SELECT v FROM kv WHERE k=?', ['free_ip_salt']);
+      if (!row || !row.v) {
+        await this.db.run('INSERT OR IGNORE INTO kv (k, v) VALUES (?,?)', ['free_ip_salt', crypto.randomBytes(24).toString('hex')]);
+        row = await this.db.get('SELECT v FROM kv WHERE k=?', ['free_ip_salt']);
+      }
+      this._ipSalt = row.v;
+    }
+    return crypto.createHash('sha256').update(`${this._ipSalt}|${String(ip).trim().toLowerCase()}`).digest('hex').slice(0, 32);
+  }
+
+  async createFromBrief(brief, { principal, origin, email, ipTag } = {}) {
     const v = core.validateBrief(brief);
     if (!v.ok) throw Object.assign(new Error(v.errors.join('; ')), { status: 400 });
     const id = crypto.randomUUID();
     const publicId = core.newPublicId(crypto.randomBytes);
     const price = core.priceCentsFor(v.brief.tier, this.cfg.prices);
     await this.db.run(
-      'INSERT INTO orders (id, public_id, state, brief_json, tier, price_cents, currency, email, principal, origin, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-      [id, publicId, 'quoted', JSON.stringify(v.brief), v.brief.tier, price, this.cfg.currency, email || null, principal || null, origin || 'web', now(), now()],
+      'INSERT INTO orders (id, public_id, state, brief_json, tier, price_cents, currency, email, principal, origin, ip_tag, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      [id, publicId, 'quoted', JSON.stringify(v.brief), v.brief.tier, price, this.cfg.currency, email || null, principal || null, origin || 'web', ipTag || null, now(), now()],
     );
     for (let i = 0; i < v.brief.trackTitles.length; i++) {
       await this.db.run('INSERT INTO tracks (order_id, idx, title, status, updated_at) VALUES (?,?,?,?,?)', [id, i, v.brief.trackTitles[i], 'pending', now()]);
@@ -133,16 +149,25 @@ class Orders {
 
   /** How many free albums this visitor already has. A web visitor is named by
    *  their session; a city visitor by their principal. */
-  async freeGrantedTo({ principal, sessionId }) {
+  async freeGrantedTo({ principal, sessionId, ipTag }) {
     if (principal) {
       const r = await this.db.get('SELECT COUNT(*) AS n FROM ledger l JOIN orders o ON o.id = l.order_id WHERE l.kind=? AND o.principal=?', ['free', principal]);
       return (r && r.n) || 0;
     }
+    // A web visitor is counted two ways and the larger wins: by session, and
+    // by network address. A session is a cookie the visitor can throw away;
+    // until 2026-11-17 it was the only count, and one caller could take a free
+    // album per fresh cookie up to the daily limit.
+    let n = 0;
     if (sessionId) {
       const r = await this.db.get('SELECT COUNT(*) AS n FROM ledger l JOIN orders o ON o.id = l.order_id JOIN sessions s ON s.order_id = o.id WHERE l.kind=? AND s.id=?', ['free', sessionId]);
-      return (r && r.n) || 0;
+      n = Math.max(n, (r && r.n) || 0);
     }
-    return 0;
+    if (ipTag) {
+      const r = await this.db.get('SELECT COUNT(*) AS n FROM ledger l JOIN orders o ON o.id = l.order_id WHERE l.kind=? AND o.ip_tag=?', ['free', ipTag]);
+      n = Math.max(n, (r && r.n) || 0);
+    }
+    return n;
   }
 
   async listByState(state, limit = 50) {

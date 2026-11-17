@@ -17,7 +17,7 @@ class Desk {
 
   /** Ask the free policy about one order. Reads the generator's credits at
    *  most once a minute; a stale-but-recent number is fine for a door. */
-  async freeCheck(order, { principal, sessionId }) {
+  async freeCheck(order, { principal, sessionId, ipTag }) {
     const f = this.cfg.free || {};
     const nowMs = Date.now();
     if (!this._credits || nowMs - this._creditsAt > 60000) {
@@ -35,7 +35,7 @@ class Desk {
       minCredits: f.minCredits,
       grantedToday: await this.orders.freeGrantedSince(since),
       dailyLimit: f.dailyLimit,
-      grantedToVisitor: await this.orders.freeGrantedTo({ principal, sessionId }),
+      grantedToVisitor: await this.orders.freeGrantedTo({ principal, sessionId, ipTag }),
       visitorLimit: f.visitorLimit,
     });
   }
@@ -55,7 +55,7 @@ class Desk {
   opening(session) { return npc.line(session.state, this.ctx()); }
 
   /** One turn. Returns { reply, session, order } with the session saved. */
-  async turn(session, text, { principal, origin, email } = {}) {
+  async turn(session, text, { principal, origin, email, ip } = {}) {
     let { state, reply, needs } = npc.advance(session.state, text, this.ctx());
     let order = session.orderId ? await this.orders.get(session.orderId) : null;
 
@@ -71,10 +71,14 @@ class Desk {
       // payment link, in that order. The free door closes itself when
       // payments are configured, so the two never both open.
       if (!order || order.state !== 'quoted') {
-        order = await this.orders.createFromBrief(state.brief, { principal, origin, email });
+        // A city visitor is named by their principal and arrives through the
+        // tower's own server, so its address means nothing; only a web
+        // visitor's address is tagged.
+        const tag = principal ? null : await this.orders.ipTag(ip);
+        order = await this.orders.createFromBrief(state.brief, { principal, origin, email, ipTag: tag });
         await this.orders.saveSession(session.id, state, order.id);
       }
-      const free = await this.freeCheck(order, { principal, sessionId: session.id });
+      const free = await this.freeCheck(order, { principal, sessionId: session.id, ipTag: principal ? null : await this.orders.ipTag(ip) });
       let checkoutUrl = null;
       if (free.ok) {
         const g = await this.orders.grantFree(order, free.reason);

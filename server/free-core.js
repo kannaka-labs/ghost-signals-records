@@ -43,7 +43,7 @@ function freeAllowed(a) {
     return no(`the house gives away up to ${TIERS[a.maxTier].label.toLowerCase()}; this is a ${TIERS[a.tier].label.toLowerCase()}`);
   }
   if (a.grantedToVisitor >= a.visitorLimit) {
-    return no(a.visitorLimit === 1 ? 'you already have one on the house' : `you already have ${a.grantedToVisitor} on the house`);
+    return no(a.visitorLimit === 1 ? 'you already have one on the house, and the house gives one to a network address' : `you already have ${a.grantedToVisitor} on the house`);
   }
   if (a.grantedToday >= a.dailyLimit) return no("the house's free albums for today are gone");
   if (a.credits === null) return no('the generator did not report its credits');
